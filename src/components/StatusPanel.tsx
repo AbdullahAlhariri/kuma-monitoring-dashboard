@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface Monitor {
   id: number
@@ -42,6 +42,73 @@ export default function StatusPanel() {
   const [data, setData] = useState<KumaData | null>(null)
   const [error, setError] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const sirenRef = useRef<{ osc: OscillatorNode; lfo: OscillatorNode; gain: GainNode } | null>(null)
+  const prevDegradedRef = useRef(false)
+
+  // Unlock AudioContext after first user gesture (browser autoplay policy)
+  useEffect(() => {
+    const unlock = () => { audioCtxRef.current?.resume() }
+    document.addEventListener('click', unlock)
+    document.addEventListener('keydown', unlock)
+    return () => { document.removeEventListener('click', unlock); document.removeEventListener('keydown', unlock) }
+  }, [])
+
+  // Start/stop siren on degraded state transitions
+  useEffect(() => {
+    if (!data) return
+    const isDegraded = !data.monitors.every(m => m.status === 1)
+
+    if (isDegraded && !prevDegradedRef.current) {
+      try {
+        const ctx = audioCtxRef.current ?? new AudioContext()
+        audioCtxRef.current = ctx
+
+        const osc = ctx.createOscillator()
+        osc.type = 'sine'
+        osc.frequency.value = 500
+
+        // LFO gives the wailing sweep: 500 Hz ± 160 Hz at 0.5 Hz
+        const lfo = ctx.createOscillator()
+        lfo.type = 'sine'
+        lfo.frequency.value = 0.5
+        const lfoGain = ctx.createGain()
+        lfoGain.gain.value = 160
+        lfo.connect(lfoGain)
+        lfoGain.connect(osc.frequency)
+
+        const gain = ctx.createGain()
+        gain.gain.value = 0.06
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+
+        osc.start()
+        lfo.start()
+        sirenRef.current = { osc, lfo, gain }
+        ctx.resume()
+      } catch (_) {}
+    } else if (!isDegraded && prevDegradedRef.current && sirenRef.current && audioCtxRef.current) {
+      // Fade out over 0.8 s then stop
+      const { osc, lfo, gain } = sirenRef.current
+      const ctx = audioCtxRef.current
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.8)
+      setTimeout(() => { try { osc.stop(); lfo.stop() } catch (_) {} }, 850)
+      sirenRef.current = null
+    }
+
+    prevDegradedRef.current = isDegraded
+  }, [data])
+
+  // Cleanup siren on unmount
+  useEffect(() => {
+    return () => {
+      if (sirenRef.current) {
+        try { sirenRef.current.osc.stop(); sirenRef.current.lfo.stop() } catch (_) {}
+        sirenRef.current = null
+      }
+      audioCtxRef.current?.close()
+    }
+  }, [])
 
   useEffect(() => {
     const fetchData = (): void => {
