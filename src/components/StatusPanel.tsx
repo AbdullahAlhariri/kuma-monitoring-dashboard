@@ -48,7 +48,7 @@ export default function StatusPanel() {
 
   // Unlock AudioContext after first user gesture (browser autoplay policy)
   useEffect(() => {
-    const unlock = () => { audioCtxRef.current?.resume() }
+    const unlock = () => { void audioCtxRef.current?.resume() }
     document.addEventListener('click', unlock)
     document.addEventListener('keydown', unlock)
     return () => { document.removeEventListener('click', unlock); document.removeEventListener('keydown', unlock) }
@@ -85,14 +85,14 @@ export default function StatusPanel() {
         osc.start()
         lfo.start()
         sirenRef.current = { osc, lfo, gain }
-        ctx.resume()
-      } catch (_) {}
+        void ctx.resume()
+      } catch {}
     } else if (!isDegraded && prevDegradedRef.current && sirenRef.current && audioCtxRef.current) {
       // Fade out over 0.8 s then stop
       const { osc, lfo, gain } = sirenRef.current
       const ctx = audioCtxRef.current
       gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.8)
-      setTimeout(() => { try { osc.stop(); lfo.stop() } catch (_) {} }, 850)
+      setTimeout(() => { try { osc.stop(); lfo.stop() } catch {} }, 850)
       sirenRef.current = null
     }
 
@@ -103,10 +103,10 @@ export default function StatusPanel() {
   useEffect(() => {
     return () => {
       if (sirenRef.current) {
-        try { sirenRef.current.osc.stop(); sirenRef.current.lfo.stop() } catch (_) {}
+        try { sirenRef.current.osc.stop(); sirenRef.current.lfo.stop() } catch {}
         sirenRef.current = null
       }
-      audioCtxRef.current?.close()
+      void audioCtxRef.current?.close()
     }
   }, [])
 
