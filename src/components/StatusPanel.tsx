@@ -38,10 +38,16 @@ function timeAgo(timeStr: string, now: number): string {
   return `${Math.floor(min / 60)}h ago`
 }
 
-export default function StatusPanel() {
+interface StatusPanelProps {
+  onFoldChange?: (isFolded: boolean) => void
+}
+
+export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
   const [data, setData] = useState<KumaData | null>(null)
   const [error, setError] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [userExpanded, setUserExpanded] = useState(false)
+
   const audioCtxRef = useRef<AudioContext | null>(null)
   const sirenRef = useRef<{ osc: OscillatorNode; lfo: OscillatorNode; gain: GainNode } | null>(null)
   const prevDegradedRef = useRef(false)
@@ -54,10 +60,25 @@ export default function StatusPanel() {
     return () => { document.removeEventListener('click', unlock); document.removeEventListener('keydown', unlock) }
   }, [])
 
-  // Start/stop siren on degraded state transitions
+  // Start/stop siren on degraded state transitions & handle auto un-collapse / auto collapse
+  const prevAllUpRef = useRef<boolean | null>(null)
+
   useEffect(() => {
     if (!data) return
-    const isDegraded = !data.monitors.every(m => m.status === 1)
+    const allUp = data.monitors.every(m => m.status === 1)
+    const isDegraded = !allUp
+
+    // Handle auto un-collapse on outage & auto collapse on recovery
+    if (prevAllUpRef.current !== null) {
+      if (!allUp && prevAllUpRef.current) {
+        // Outage detected: Auto un-collapse to show degraded monitors
+        setUserExpanded(true)
+      } else if (allUp && !prevAllUpRef.current) {
+        // All systems recovered: Auto collapse back into folded status bar
+        setUserExpanded(false)
+      }
+    }
+    prevAllUpRef.current = allUp
 
     if (isDegraded && !prevDegradedRef.current) {
       try {
@@ -127,6 +148,14 @@ export default function StatusPanel() {
     return () => { clearInterval(poll); clearInterval(ticker) }
   }, [])
 
+  const allUp = data ? data.monitors.every(m => m.status === 1) : true
+  const anyDown = data ? data.monitors.some(m => m.status === 0) : false
+  const isCollapsed = allUp && !userExpanded
+
+  useEffect(() => {
+    onFoldChange?.(isCollapsed)
+  }, [isCollapsed, onFoldChange])
+
   if (error) return (
     <div className="s-err">
       <span>●</span> Status unreachable
@@ -140,8 +169,191 @@ export default function StatusPanel() {
     groups[m.group].push(m)
   }
 
-  const allUp = data.monitors.every(m => m.status === 1)
-  const anyDown = data.monitors.some(m => m.status === 0)
+  if (isCollapsed) {
+    const upCount = data.monitors.filter(m => m.status === 1).length
+    const totalCount = data.monitors.length
+    return (
+      <div
+        className="s-collapsed-bar"
+        onClick={() => {
+          setUserExpanded(true)
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            setUserExpanded(true)
+          }
+        }}
+        title="All systems operational. Click to expand full status view."
+      >
+        <div className="s-collapsed-left">
+          <span className="s-dot-pulse" />
+          <span className="s-collapsed-title">
+            <strong>({upCount}/{totalCount} UP)</strong>
+          </span>
+        </div>
+
+        <div className="s-collapsed-groups">
+          {Object.entries(groups).map(([group, monitors]) => {
+            const groupUp = monitors.filter(m => m.status === 1).length
+            const groupTotal = monitors.length
+            const isGroupAllUp = groupUp === groupTotal
+            return (
+              <div key={group} className="s-collapsed-group-chip">
+                <span className="s-group-chip-name">{group}</span>
+                <span
+                  className="s-group-chip-count"
+                  style={{ color: isGroupAllUp ? '#22c55e' : '#ef4444' }}
+                >
+                  {groupUp}/{groupTotal}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="s-collapsed-right">
+          <span className="s-last-updated" title={data.fetchedAt}>
+            fetched {timeAgo(data.fetchedAt, now)}
+          </span>
+          <button
+            type="button"
+            className="s-expand-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              setUserExpanded(true)
+            }}
+          >
+            Expand View ▲
+          </button>
+        </div>
+
+        <style jsx>{`
+          .s-collapsed-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            padding: 16px 24px;
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            border: 1px solid rgba(34, 197, 94, 0.4);
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.1);
+            width: 100%;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s ease;
+          }
+
+          .s-collapsed-bar:hover {
+            background: var(--surface-hover);
+            border-color: rgba(34, 197, 94, 0.7);
+            box-shadow: 0 0 28px rgba(34, 197, 94, 0.18);
+          }
+
+          .s-collapsed-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+          }
+
+          .s-dot-pulse {
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 12px #22c55e;
+            animation: pulse-glow 2s ease-in-out infinite;
+          }
+
+          @keyframes pulse-glow {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.25); opacity: 0.6; }
+          }
+
+          .s-collapsed-title strong {
+            font-family: var(--font-mono);
+            color: #22c55e;
+            font-size: 20px;
+            letter-spacing: 0.02em;
+          }
+
+          .s-collapsed-groups {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+            overflow-x: auto;
+            padding: 2px 0;
+          }
+
+          .s-collapsed-groups::-webkit-scrollbar {
+            display: none;
+          }
+
+          .s-collapsed-group-chip {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border-bright);
+            flex-shrink: 0;
+          }
+
+          .s-group-chip-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+
+          .s-group-chip-count {
+            font-family: var(--font-mono);
+            font-size: 16px;
+            font-weight: 700;
+          }
+
+          .s-collapsed-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-shrink: 0;
+          }
+
+          .s-last-updated {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--text-secondary);
+          }
+
+          .s-expand-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border-bright);
+            color: var(--text-primary);
+            padding: 6px 16px;
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          }
+
+          .s-expand-btn:hover {
+            background: rgba(255, 255, 255, 0.16);
+            border-color: #fff;
+          }
+        `}</style>
+      </div>
+    )
+  }
 
   return (
     <div className="s-root">
@@ -160,9 +372,22 @@ export default function StatusPanel() {
             {anyDown ? 'Outage detected' : allUp ? 'All systems operational' : 'Partial degradation'}
           </span>
         </div>
-        <span className="s-last-updated" title={data.fetchedAt}>
-          fetched {timeAgo(data.fetchedAt, now)}
-        </span>
+        <div className="s-header-right">
+          <span className="s-last-updated" title={data.fetchedAt}>
+            fetched {timeAgo(data.fetchedAt, now)}
+          </span>
+          {allUp && (
+            <button
+              type="button"
+              className="s-collapse-btn"
+              onClick={() => {
+                setUserExpanded(false)
+              }}
+            >
+              Collapse ▼
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="s-groups">
@@ -243,6 +468,7 @@ export default function StatusPanel() {
           flex-shrink: 0;
         }
         .s-overall { display: flex; align-items: center; gap: 8px; }
+        .s-header-right { display: flex; align-items: center; gap: 14px; }
         .s-overall-dot {
           width: 8px;
           height: 8px;
@@ -264,6 +490,22 @@ export default function StatusPanel() {
           font-family: var(--font-mono);
           font-size: 17px;
           color: var(--text-secondary);
+        }
+        .s-collapse-btn {
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid var(--border);
+          color: var(--text-primary);
+          padding: 4px 12px;
+          border-radius: var(--radius-sm);
+          font-family: var(--font-mono);
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        .s-collapse-btn:hover {
+          background: rgba(255, 255, 255, 0.12);
+          border-color: var(--border-bright);
         }
 
         .s-groups {

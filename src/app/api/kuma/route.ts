@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { config } from '@/lib/config'
 
+export const dynamic = 'force-dynamic'
+
 interface KumaMonitorStub {
   id: number
   name: string
@@ -29,6 +31,10 @@ interface KumaPageResponse {
 }
 
 export async function GET() {
+  if (!config.kuma.enabled) {
+    return NextResponse.json({ enabled: false, groups: [] })
+  }
+
   const { baseUrl, slug } = config.kuma
 
   try {
