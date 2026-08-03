@@ -46,7 +46,7 @@ export default function Weather() {
       fetch('/api/weather')
         .then(r => r.json() as Promise<WeatherApiResponse>)
         .then(d => { if (!('error' in d)) setData(d) })
-        .catch(() => { /* silently ignore polling errors; last data stays displayed */ })
+        .catch(() => { /* silently ignore polling errors */ })
     }, 15 * 60 * 1000)
     return () => { clearInterval(id) }
   }, [])
@@ -54,195 +54,339 @@ export default function Weather() {
   if (error) return <div className="w-err">Weather unavailable</div>
   if (!data) return <div className="w-loading">Loading weather…</div>
 
-  const cur = data.current
-  const curInfo = wmoToInfo(cur.weather_code)
-
-  const hourlySlots = data.hourly.time
-    .slice(0, 24)
-    .filter((_, i) => i % 3 === 0)
-    .map((t, i) => ({
-      hour: t.slice(11, 16),
-      temp: Math.round(data.hourly.temperature_2m[i * 3]),
-      code: data.hourly.weather_code[i * 3],
-    }))
-
   return (
     <div className="w-root">
-      {/* Current + Hourly side by side */}
-      <div className="w-top-row">
-        <div className="w-current">
-          <div className="w-cur-icon">{curInfo.icon}</div>
-          <div className="w-cur-info">
-            <div className="w-cur-temp">{Math.round(cur.temperature_2m)}°</div>
-            <div className="w-cur-label">{curInfo.label}</div>
-            <div className="w-cur-meta">
-              <span>Feels {Math.round(cur.apparent_temperature)}°</span>
-              <span className="w-dot">·</span>
-              <span>{cur.relative_humidity_2m}% hum</span>
-              <span className="w-dot">·</span>
-              <span>{Math.round(cur.wind_speed_10m)} km/h</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="w-hourly">
-          {hourlySlots.map(slot => (
-            <div key={slot.hour} className="w-hour-slot">
-              <span className="w-hour-label">{slot.hour}</span>
-              <span className="w-hour-icon">{wmoToInfo(slot.code).icon}</span>
-              <span className="w-hour-temp">{slot.temp}°</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Weekly */}
-      <div className="w-week">
-        {data.daily.time.map((d, i) => {
+      <div className="w-days-container">
+        {data.daily.time.slice(0, 7).map((d, i) => {
+          const isToday = i === 0
+          const dateStr = d
           const info = wmoToInfo(data.daily.weather_code[i])
           const max = Math.round(data.daily.temperature_2m_max[i])
           const min = Math.round(data.daily.temperature_2m_min[i])
           const rain = data.daily.precipitation_probability_max[i]
+
+          let apparent = max
+          let humidity = 50
+          let wind = 12
+
+          if (isToday) {
+            apparent = Math.round(data.current.apparent_temperature)
+            humidity = data.current.relative_humidity_2m
+            wind = Math.round(data.current.wind_speed_10m)
+          } else {
+            for (let idx = 0; idx < data.hourly.time.length; idx++) {
+              if (data.hourly.time[idx].startsWith(dateStr) && data.hourly.time[idx].endsWith('12:00')) {
+                apparent = Math.round(data.hourly.temperature_2m[idx])
+                break
+              }
+            }
+          }
+
+          const dayHourlySlots: { hour: string; temp: number; code: number }[] = []
+          for (let idx = 0; idx < data.hourly.time.length; idx++) {
+            const t = data.hourly.time[idx]
+            if (t.startsWith(dateStr)) {
+              const hourNum = parseInt(t.slice(11, 13), 10)
+              if (hourNum % 3 === 0) {
+                dayHourlySlots.push({
+                  hour: String(hourNum),
+                  temp: Math.round(data.hourly.temperature_2m[idx]),
+                  code: data.hourly.weather_code[idx],
+                })
+              }
+            }
+          }
+
           return (
-            <div key={d} className={`w-day ${i === 0 ? 'w-day--today' : ''}`}>
-              <span className="w-day-name">{dayLabel(d, i)}</span>
-              <span className="w-day-icon">{info.icon}</span>
-              {rain > 20 && <span className="w-day-rain">{rain}%</span>}
-              <span className="w-day-range">
-                <span className="w-day-max">{max}°</span>
-                <span className="w-day-slash">/</span>
-                <span className="w-day-min">{min}°</span>
-              </span>
+            <div key={d} className={`w-day-card ${isToday ? 'w-day-card--today' : ''}`}>
+              {/* Left: Big Icon + Day Name + Temp + Label + Meta Specs */}
+              <div className="w-day-hero">
+                <div className="w-day-icon">{info.icon}</div>
+                <div className="w-day-info">
+                  <div className="w-day-header">
+                    <span className="w-day-name">{dayLabel(d, i)}</span>
+                    <div className="w-day-temps">
+                      <span className="w-day-max">{max}°</span>
+                      <span className="w-day-slash">/</span>
+                      <span className="w-day-min">{min}°</span>
+                    </div>
+                  </div>
+                  <div className="w-day-label">{info.label}</div>
+                  <div className="w-day-meta">
+                    <span>Feels {apparent}°</span>
+                    <span className="w-dot">·</span>
+                    <span>{humidity}% hum</span>
+                    <span className="w-dot">·</span>
+                    <span>{wind} km/h wind</span>
+                    {rain > 10 && (
+                      <>
+                        <span className="w-dot">·</span>
+                        <span className="w-rain-badge">💧 {rain}%</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: In-day hourly breakdown chips */}
+              <div className="w-day-hourly-row">
+                {dayHourlySlots.map((slot) => (
+                  <div key={slot.hour} className="w-hour-slot">
+                    <span className="w-hour-label">{slot.hour}</span>
+                    <span className="w-hour-icon">{wmoToInfo(slot.code).icon}</span>
+                    <span className="w-hour-temp">{slot.temp}°</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )
         })}
       </div>
 
       <style jsx>{`
-        .w-root { display: flex; flex-direction: column; gap: 16px; width: 100%; }
+        .w-root {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          width: 100%;
+          margin: 0;
+          padding: 0;
+        }
         .w-err, .w-loading {
           font-family: var(--font-mono);
           font-size: 18px;
           color: var(--text-muted);
         }
 
-        /* Top row: current + hourly side by side */
-        .w-top-row {
+        .w-days-container {
           display: flex;
-          flex-direction: row;
-          align-items: flex-start;
-          gap: 20px;
+          flex-direction: column;
+          gap: 14px;
+          width: 100%;
+          margin: 0;
+          padding: 0;
         }
 
-        /* Current */
-        .w-current {
+        .w-day-card {
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+          padding: 10px 0;
+          margin: 0;
+          width: 100%;
+          border: none;
+          background: transparent;
+          box-shadow: none;
+          transition: all 0.2s ease;
+        }
+
+        .w-day-card--today {
+          background: transparent;
+          border: none;
+          box-shadow: none;
+          padding: 16px 0;
+          margin: 0 0 20px 0;
+          width: 100%;
+        }
+
+        .w-day-hero {
           display: flex;
           align-items: center;
           gap: 18px;
           flex-shrink: 0;
+          min-width: 290px;
         }
-        .w-cur-icon { font-size: 80px; line-height: 1; }
-        .w-cur-info { display: flex; flex-direction: column; gap: 4px; }
-        .w-cur-temp {
-          font-family: var(--font-mono);
-          font-size: clamp(64px, 7vw, 88px);
-          font-weight: 300;
-          color: var(--text-primary);
+
+        .w-day-card--today .w-day-hero {
+          gap: 22px;
+          min-width: 360px;
+        }
+
+        .w-day-card--today .w-day-icon {
+          font-size: 80px;
           line-height: 1;
+          filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
         }
-        .w-cur-label {
-          font-size: 26px;
-          font-weight: 300;
+
+        .w-day-icon {
+          font-size: 52px;
+          line-height: 1;
+          filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+        }
+
+        .w-day-info {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .w-day-header {
+          display: flex;
+          align-items: baseline;
+          gap: 12px;
+        }
+
+        .w-day-name {
+          font-family: var(--font-mono);
+          font-size: 20px;
+          font-weight: 800;
+          color: var(--text-primary);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .w-day-card--today .w-day-name {
+          font-size: 30px;
+          font-weight: 900;
+          color: #ffffff;
+          letter-spacing: 0.05em;
+        }
+
+        .w-day-temps {
+          display: flex;
+          align-items: baseline;
+          gap: 4px;
+          font-family: var(--font-mono);
+        }
+
+        .w-day-max {
+          font-size: 22px;
+          font-weight: 800;
+          color: var(--text-primary);
+        }
+
+        .w-day-card--today .w-day-max {
+          font-size: 32px;
+          font-weight: 800;
+          color: #ffffff;
+        }
+
+        .w-day-slash {
+          font-size: 15px;
+          color: var(--text-muted);
+        }
+
+        .w-day-min {
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--text-muted);
+        }
+
+        .w-day-card--today .w-day-min {
+          font-size: 20px;
+          font-weight: 600;
+        }
+
+        .w-day-label {
+          font-size: 18px;
+          font-weight: 500;
           color: var(--text-secondary);
         }
-        .w-cur-meta {
+
+        .w-day-card--today .w-day-label {
+          font-size: 22px;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+
+        .w-day-meta {
           display: flex;
+          align-items: center;
           gap: 6px;
-          font-size: 20px;
           font-family: var(--font-mono);
+          font-size: 14px;
           color: var(--text-muted);
           flex-wrap: wrap;
         }
-        .w-dot { opacity: 0.4; }
 
-        /* Hourly */
-        .w-hourly {
-          flex: 1;
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-          align-content: flex-start;
-          overflow: hidden;
+        .w-day-card--today .w-day-meta {
+          font-size: 16px;
+          color: var(--text-secondary);
         }
+
+        .w-dot {
+          opacity: 0.4;
+        }
+
+        .w-rain-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          color: #38bdf8;
+          font-family: var(--font-mono);
+          font-size: 18px;
+          font-weight: 800;
+          background: transparent;
+          border: none;
+          padding: 0;
+          box-shadow: none;
+        }
+
+        .w-day-card--today .w-rain-badge {
+          font-size: 20px;
+        }
+
+        .w-day-hourly-row {
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          gap: 10px;
+          flex: 1;
+          min-width: 0;
+          justify-content: flex-end;
+        }
+
         .w-hour-slot {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 5px;
-          background: var(--surface);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          padding: 10px 12px;
-          min-width: 62px;
-        }
-        .w-hour-label {
-          font-family: var(--font-mono);
-          font-size: 17px;
-          color: var(--text-muted);
-        }
-        .w-hour-icon { font-size: 32px; }
-        .w-hour-temp {
-          font-family: var(--font-mono);
-          font-size: 22px;
-          font-weight: 400;
-          color: var(--text-primary);
+          gap: 4px;
+          background: transparent;
+          border: none;
+          padding: 6px 10px;
+          min-width: 64px;
         }
 
-        /* Weekly — horizontal row of day cards */
-        .w-week {
-          display: flex;
-          flex-direction: row;
-          gap: 6px;
+        .w-day-card--today .w-hour-slot {
+          padding: 10px 16px;
+          min-width: 74px;
         }
-        .w-day {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 4px;
-          padding: 8px 6px;
-          border-radius: var(--radius-sm);
-          background: transparent;
-          border: 1px solid transparent;
-        }
-        .w-day--today {
-          background: var(--surface);
-          border-color: var(--border);
-        }
-        .w-day-name {
-          font-size: 17px;
-          font-weight: 400;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-        }
-        .w-day--today .w-day-name { color: var(--text-primary); }
-        .w-day-icon { font-size: 30px; }
-        .w-day-rain {
+
+        .w-hour-label {
           font-family: var(--font-mono);
           font-size: 16px;
-          color: var(--accent);
+          font-weight: 800;
+          color: #9ca3af;
         }
-        .w-day-range {
+
+        .w-day-card--today .w-hour-label {
+          font-size: 18px;
+          font-weight: 800;
+          color: #cbd5e1;
+        }
+
+        .w-hour-icon {
+          font-size: 28px;
+        }
+
+        .w-day-card--today .w-hour-icon {
+          font-size: 32px;
+        }
+
+        .w-hour-temp {
           font-family: var(--font-mono);
-          font-size: 20px;
-          display: flex;
-          gap: 2px;
-          align-items: baseline;
+          font-size: 16px;
+          font-weight: 800;
+          color: #ffffff;
         }
-        .w-day-max { color: var(--text-primary); font-weight: 500; }
-        .w-day-slash { color: var(--text-muted); }
-        .w-day-min { color: var(--text-muted); }
+
+        .w-day-card--today .w-hour-temp {
+          font-size: 18px;
+          font-weight: 800;
+          color: #ffffff;
+        }
       `}</style>
     </div>
   )

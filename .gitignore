@@ -10,6 +10,8 @@ out/
 # Environment — never commit real values
 .env.local
 .env.*.local
+habit-tags.json
+
 
 # Build artefacts
 dist/
@@ -31,3 +33,4 @@ pnpm-debug.log*
 .idea/
 *.swp
 *.swo
+/mawaqit-config.json

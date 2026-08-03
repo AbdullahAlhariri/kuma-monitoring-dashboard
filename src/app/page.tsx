@@ -1,33 +1,47 @@
 'use client'
+import { useState } from 'react'
 import dynamic from 'next/dynamic'
 
 const Clock = dynamic(() => import('@/components/Clock'), { ssr: false })
 const Weather = dynamic(() => import('@/components/Weather'), { ssr: false })
 const StatusPanel = dynamic(() => import('@/components/StatusPanel'), { ssr: false })
+const Habits = dynamic(() => import('@/components/Habits'), { ssr: false })
 
 export default function Dashboard() {
+  const [isKumaFolded, setIsKumaFolded] = useState(true)
+
   return (
     <div className="dashboard">
-
-      {/* ── TOP ROW: Clock + Weather ─────────────────────── */}
+      {/* ── TOP SECTION: Left Column (Clock + Weather stacked) & Right Column (Habits) ── */}
       <div className="top-row">
-        <section className="card card-clock">
-          <Clock />
-        </section>
-        <div className="top-divider" />
-        <section className="card card-weather">
-          <div className="section-label">{process.env.NEXT_PUBLIC_WEATHER_LABEL ?? 'Weather'}</div>
-          <Weather />
+        {/* Left Column: Stacked Clock on top of Weather */}
+        <div className="left-stack">
+          <section className="card card-clock">
+            <Clock isKumaFolded={isKumaFolded} />
+          </section>
+
+          <div className="horizontal-divider" />
+
+          <section className="card card-weather">
+            <div className="section-label">{process.env.NEXT_PUBLIC_WEATHER_LABEL ?? 'Weather'}</div>
+            <Weather />
+          </section>
+        </div>
+
+        <div className="vertical-divider" />
+
+        {/* Right Column: Habits Panel */}
+        <section className="card card-habits">
+          <Habits isKumaFolded={isKumaFolded} />
         </section>
       </div>
 
       {/* ── DIVIDER ─────────────────────────────────────── */}
       <div className="mid-divider" />
 
-      {/* ── KUMA GRID ───────────────────────────────────── */}
+      {/* ── KUMA STATUS ─────────────────────────────────── */}
       <section className="card card-status">
-        {/*<div className="section-label">Infrastructure Status</div>*/}
-        <StatusPanel />
+        <StatusPanel onFoldChange={setIsKumaFolded} />
       </section>
 
       <style jsx>{`
@@ -37,33 +51,45 @@ export default function Dashboard() {
           background: var(--bg);
           display: flex;
           flex-direction: column;
-          padding: 28px 32px 0;
+          padding: 20px 24px;
           overflow: hidden;
         }
 
-        /* Top flex row */
+        /* Top flex row fills available space */
         .top-row {
           display: flex;
           flex-direction: row;
           align-items: stretch;
-          flex-shrink: 0;
-          max-height: 400px;
+          flex: 1;
+          min-height: 0;
+          gap: 0;
+        }
+
+        /* Left Column: Stacked Clock & Weather with clean gap */
+        .left-stack {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-width: 0;
+          padding-right: 0;
+          gap: 18px;
         }
 
         .card-clock {
           display: flex;
           flex-direction: column;
           justify-content: center;
-          gap: 14px;
-          padding-right: 28px;
+          gap: 12px;
           flex-shrink: 0;
+          padding: 6px 0 10px 0;
         }
 
-        .top-divider {
-          width: 1px;
+        .horizontal-divider {
+          height: 1px;
           background: var(--border);
           flex-shrink: 0;
-          align-self: stretch;
+          width: 100%;
+          margin: 4px 0;
         }
 
         .card-weather {
@@ -71,38 +97,58 @@ export default function Dashboard() {
           display: flex;
           flex-direction: column;
           gap: 14px;
-          padding-left: 28px;
           overflow-y: auto;
           min-width: 0;
         }
-        .card-weather::-webkit-scrollbar { width: 2px; }
-        .card-weather::-webkit-scrollbar-thumb { background: var(--border-bright); }
+
+        .card-weather::-webkit-scrollbar {
+          width: 2px;
+        }
+        .card-weather::-webkit-scrollbar-thumb {
+          background: var(--border-bright);
+        }
+
+        .vertical-divider {
+          width: 1px;
+          background: var(--border);
+          flex-shrink: 0;
+          align-self: stretch;
+        }
+
+        .card-habits {
+          flex: 1.35;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          padding-left: 24px;
+          overflow: hidden;
+          min-width: 0;
+        }
 
         /* Horizontal divider between top row and kuma */
         .mid-divider {
           height: 1px;
           background: var(--border);
-          margin: 20px 0;
+          margin: 14px 0;
           flex-shrink: 0;
         }
 
-        /* Kuma section fills remaining space — no scroll, everything must fit */
+        /* Kuma section shrinks or expands based on status */
         .card-status {
-          flex: 1;
+          flex-shrink: 0;
           display: flex;
           flex-direction: column;
           gap: 14px;
-          overflow: hidden;
           min-height: 0;
         }
 
         /* Section labels */
         .section-label {
-          font-size: 15px;
-          font-weight: 400;
+          font-size: 18px;
+          font-weight: 600;
           letter-spacing: 0.14em;
           text-transform: uppercase;
-          color: var(--text-muted);
+          color: var(--text-primary);
           flex-shrink: 0;
         }
       `}</style>

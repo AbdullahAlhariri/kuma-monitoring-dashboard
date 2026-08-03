@@ -11,12 +11,25 @@ function env(key: string, fallback?: string): string {
 
 export const config = {
   weather: {
-    lat: env('WEATHER_LAT', '52.3676'),
-    lon: env('WEATHER_LON', '4.9041'),
+    enabled: env('WEATHER_ENABLED', 'true') === 'true',
+    lat: env('WEATHER_LAT', '51.5714'),
+    lon: env('WEATHER_LON', '4.6366'),
     timezone: env('WEATHER_TIMEZONE', 'Europe/Amsterdam'),
   },
   kuma: {
+    enabled: env('KUMA_ENABLED', 'true') === 'true',
     baseUrl: env('KUMA_BASE_URL', 'http://localhost:3001'),
     slug: env('KUMA_SLUG', 'public'),
+  },
+  beaver: {
+    enabled: env('BEAVER_ENABLED', 'true') === 'true',
+    baseUrl: env('BEAVER_BASE_URL'),
+    token: env('BEAVER_TOKEN'),
+    refetchIntervalMs: parseInt(env('BEAVER_REFETCH_INTERVAL_MS', '10000'), 10),
+  },
+  mawaqit: {
+    enabled: env('MAWAQIT_ENABLED', 'true') === 'true',
+    url: env('MAWAQIT_URL'),
+    configPath: env('MAWAQIT_CONFIG_PATH', 'mawaqit-config.json'),
   },
 } as const
