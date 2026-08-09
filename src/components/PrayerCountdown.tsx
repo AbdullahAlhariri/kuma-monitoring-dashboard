@@ -14,6 +14,24 @@ interface PrayerApiResponse {
   tomorrowFajrIqamah: string
 }
 
+const ARABIC_PRAYER_NAMES: Record<string, string> = {
+  fajr: 'الفجر',
+  sunrise: 'الشروق',
+  shuruq: 'الشروق',
+  duhr: 'الظهر',
+  dhuhr: 'الظهر',
+  zuhr: 'الظهر',
+  asr: 'العصر',
+  maghrib: 'المغرب',
+  isha: 'العشاء',
+  jumua: 'الجمعة',
+  jumuah: 'الجمعة',
+}
+
+function arabicPrayerName(name: string): string | null {
+  return ARABIC_PRAYER_NAMES[name.toLowerCase().trim()] ?? null
+}
+
 export default function PrayerCountdown({ now }: { now: Date }) {
   const [data, setData] = useState<PrayerApiResponse | null>(null)
 
@@ -118,6 +136,11 @@ export default function PrayerCountdown({ now }: { now: Date }) {
     <div className={`prayer-widget ${isIqamahPhase ? 'prayer-widget--iqamah' : ''}`}>
       <div className="prayer-header">
         <span className="prayer-name">{selectedPrayer.name}</span>
+        {arabicPrayerName(selectedPrayer.name) && (
+          <span className="prayer-name-ar" lang="ar" dir="rtl">
+            {arabicPrayerName(selectedPrayer.name)}
+          </span>
+        )}
       </div>
       <div className={`prayer-countdown ${sizeClass}`}>{countdownText}</div>
       <div className="prayer-target">
@@ -148,20 +171,27 @@ export default function PrayerCountdown({ now }: { now: Date }) {
           align-items: center;
           gap: 8px;
           font-family: var(--font-mono);
-          font-size: 36px;
-          font-weight: 800;
+          font-size: 40px;
+          font-weight: 500;
           color: #ffffff;
           letter-spacing: 0.06em;
-          text-transform: uppercase;
         }
 
         .prayer-name {
           color: #ffffff;
         }
 
+        .prayer-name-ar {
+          font-family: var(--font-arabic), serif;
+          font-size: 44px;
+          font-weight: 400;
+          color: #ffffff;
+          line-height: 1;
+        }
+
         .prayer-countdown {
           font-family: var(--font-mono);
-          font-weight: 800;
+          font-weight: 500;
           color: #22c55e;
           letter-spacing: 0.01em;
           line-height: 1;
@@ -169,32 +199,32 @@ export default function PrayerCountdown({ now }: { now: Date }) {
         }
 
         .prayer-countdown--hrs {
-          font-size: 76px;
+          font-size: 84px;
         }
 
         .prayer-countdown--mins {
-          font-size: 104px;
+          font-size: 114px;
         }
 
         .prayer-countdown--secs {
-          font-size: 136px;
+          font-size: 150px;
         }
 
         .prayer-target {
           display: flex;
           align-items: center;
           font-family: var(--font-mono);
-          font-size: 26px;
+          font-size: 29px;
         }
 
         .prayer-time-green {
           color: #22c55e;
-          font-weight: 700;
+          font-weight: 500;
         }
 
         .prayer-time-red {
           color: #ef4444;
-          font-weight: 700;
+          font-weight: 500;
         }
 
         .prayer-sep {

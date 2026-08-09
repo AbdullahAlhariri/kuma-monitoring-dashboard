@@ -1,20 +1,21 @@
 import type { Metadata } from 'next'
-import { DM_Mono, DM_Sans } from 'next/font/google'
+import { Outfit, Scheherazade_New } from 'next/font/google'
 import './globals.css'
 
-const dmMono = DM_Mono({
+// Google Sans is not distributed for web use, so the stacks in globals.css name
+// it first — picked up when it is installed locally — and fall back to Outfit,
+// the closest open geometric sans, everywhere else.
+const outfit = Outfit({
   subsets: ['latin'],
-  weight: ['300', '400', '500'],
-  style: ['normal', 'italic'],
-  variable: '--font-mono',
+  weight: ['300', '400', '500', '600', '700', '800', '900'],
+  variable: '--font-geometric',
   display: 'swap',
 })
 
-const dmSans = DM_Sans({
-  subsets: ['latin'],
-  weight: ['200', '300', '400'],
-  style: ['normal', 'italic'],
-  variable: '--font-sans',
+const scheherazade = Scheherazade_New({
+  subsets: ['arabic'],
+  weight: ['400', '600', '700'],
+  variable: '--font-arabic',
   display: 'swap',
 })
 
@@ -25,7 +26,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${dmMono.variable} ${dmSans.variable}`}>
+    <html
+      lang="en"
+      className={`${outfit.variable} ${scheherazade.variable}`}
+    >
       <body>{children}</body>
     </html>
   )

@@ -1,30 +1,8 @@
-import fs from 'fs'
-import path from 'path'
 import { NextResponse } from 'next/server'
 import { config } from '@/lib/config'
+import { loadConfig } from '@/lib/appConfig'
 
 export const dynamic = 'force-dynamic'
-
-interface MawaqitJsonConfig {
-  mosque?: {
-    name?: string
-    url?: string
-    slug?: string
-  }
-}
-
-function loadMawaqitConfig(): MawaqitJsonConfig | null {
-  try {
-    const filePath = path.join(process.cwd(), config.mawaqit.configPath)
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf-8')
-      return JSON.parse(content) as MawaqitJsonConfig
-    }
-  } catch {
-    // Ignore if missing or invalid
-  }
-  return null
-}
 
 interface PrayerData {
   name: string
@@ -64,8 +42,7 @@ export async function GET() {
     return NextResponse.json({ enabled: false, prayers: [] })
   }
 
-  const jsonConfig = loadMawaqitConfig()
-  const targetUrl = jsonConfig?.mosque?.url ?? config.mawaqit.url
+  const targetUrl = loadConfig().mawaqit?.mosque?.url ?? config.mawaqit.url
 
   const now = new Date()
   const year = now.getFullYear()

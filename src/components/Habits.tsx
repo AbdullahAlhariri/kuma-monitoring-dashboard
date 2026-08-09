@@ -1,21 +1,18 @@
-/* eslint-disable @typescript-eslint/no-deprecated */
 'use client'
-import { useEffect, useState } from 'react'
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  Cell,
-  XAxis,
-  Tooltip as RechartsTooltip,
-  ReferenceLine,
-  LabelList,
-} from 'recharts'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+
+type ViewMode = 'graph' | 'classic'
+
+const LONG_PRESS_MS = 550
+/** Days shown by the classic dot row. */
+const CLASSIC_DAYS = 14
 
 export interface HistoryDay {
   date: string
   dayName: string
   dayNum: string
+  dow: number
+  monthLabel: string
   isToday: boolean
   done: boolean
   isSkipped: boolean
@@ -35,14 +32,35 @@ export interface Habit {
   todayDone: boolean
   todayColor?: string | null
   streak: number
-  showStreak?: boolean
-  history7: HistoryDay[]
+  streakLenient: number
+  streakStrict: number
+  /** true = a missed day resets the streak */
+  strictStreak: boolean
+  showStreak: boolean
+  view: ViewMode
+  history: HistoryDay[]
   availableTags: TagOption[]
   visualization?: string | null
 }
 
+interface HabitUiConfig {
+  hideCompleted?: boolean
+  twoColumns?: boolean
+  order?: string[]
+}
+
+/** Applies the saved order, appending habits the config hasn't seen yet. */
+function sortByConfigOrder(habits: Habit[], order?: string[]): Habit[] {
+  if (!order || order.length === 0) return habits
+  const rank = new Map(order.map((name, i) => [name, i]))
+  return [...habits].sort(
+    (a, b) => (rank.get(a.name) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.name) ?? Number.MAX_SAFE_INTEGER)
+  )
+}
+
 interface HabitsApiResponse {
   habits: Habit[]
+  ui: HabitUiConfig
   fetchedAt: string
 }
 
@@ -99,64 +117,54 @@ function getReadingColorForMinutes(mins: number, isQuran = false): string {
   return '#16a34a'                   // 1h+ -> Darker Forest Green
 }
 
-interface TooltipPayloadItem {
-  payload: {
-    dayName: string
-    dayNum: string
-    label: string
-    color: string
-    done: boolean
+/**
+ * Colour of a completed day. Tag colours (resolved server side from
+ * habit-tags.json / Beaver ##color directives) always win; duration habits fall
+ * back to the same blue → green scale the bar charts used.
+ */
+function getDayColor(habit: Habit, day: HistoryDay): string {
+  if (day.color) return day.color
+  const name = habit.name.toLowerCase()
+  if (name.includes('read') || name.includes('quran')) {
+    const mins = parseDurationMinutes(day.tagText)?.val ?? 30
+    return getReadingColorForMinutes(mins, name.includes('quran'))
   }
+  return '#22c55e'
 }
 
-function CustomChartTooltip({ active, payload }: { active?: boolean; payload?: TooltipPayloadItem[] }) {
-  if (active && payload && payload.length > 0) {
-    const item = payload[0].payload
-    return (
-      <div className="h-chart-tooltip">
-        <div className="h-tooltip-top">
-          <span className="h-tooltip-dot" style={{ background: item.color }} />
-          <span className="h-tooltip-day">{item.dayName} {item.dayNum}</span>
-        </div>
-        <div className="h-tooltip-val" style={{ color: item.color }}>
-          {item.done ? item.label : 'Missed'}
-        </div>
-        <style jsx>{`
-          .h-chart-tooltip {
-            background: #09090b;
-            border: 1px solid var(--border-bright);
-            border-radius: var(--radius-sm);
-            padding: 6px 10px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-          }
-          .h-tooltip-top {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-          }
-          .h-tooltip-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-          }
-          .h-tooltip-day {
-            font-family: var(--font-mono);
-            font-size: 12px;
-            color: var(--text-muted);
-          }
-          .h-tooltip-val {
-            font-family: var(--font-mono);
-            font-size: 14px;
-            font-weight: 700;
-          }
-        `}</style>
-      </div>
-    )
+/** Short value shown in the cell tooltip, e.g. "6:30" or "45m". */
+function getDayLabel(habit: Habit, day: HistoryDay): string {
+  const name = habit.name.toLowerCase()
+  if (name.includes('woke')) {
+    return parseWakeUpTime(day.tagText)?.label ?? 'Done'
   }
-  return null
+  if (name.includes('read') || name.includes('quran')) {
+    return parseDurationMinutes(day.tagText)?.label ?? 'Done'
+  }
+  return 'Done'
+}
+
+/** Splits the day range into Monday-first columns, like the GitHub graph. */
+function chunkIntoWeeks(days: HistoryDay[]): HistoryDay[][] {
+  const weeks: HistoryDay[][] = []
+  for (const day of days) {
+    if (weeks.length === 0 || day.dow === 0) {
+      weeks.push([])
+    }
+    weeks[weeks.length - 1].push(day)
+  }
+  return weeks
+}
+
+/** Month caption per column: printed on the first column of each new month. */
+function getMonthLabels(weeks: HistoryDay[][]): (string | null)[] {
+  let previous = ''
+  return weeks.map((week) => {
+    const label = week[0].monthLabel
+    if (label === previous) return null
+    previous = label
+    return label
+  })
 }
 
 interface HabitsProps {
@@ -168,6 +176,22 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
   const [error, setError] = useState(false)
   const [toggling, setToggling] = useState<Record<string, boolean>>({})
   const [activeModalHabit, setActiveModalHabit] = useState<Habit | null>(null)
+  const [settingsHabit, setSettingsHabit] = useState<Habit | null>(null)
+  const [draggingName, setDraggingName] = useState<string | null>(null)
+  /** Live order while a drag is in flight; committed to the JSON on drop. */
+  const [previewOrder, setPreviewOrder] = useState<string[] | null>(null)
+  /** Cards only become draggable once the grip is pressed. */
+  const [dragArmedName, setDragArmedName] = useState<string | null>(null)
+
+  // FLIP: remember where every card was, so a reorder animates instead of jumping
+  const cardRefs = useRef(new Map<string, HTMLDivElement>())
+  const prevRects = useRef(new Map<string, DOMRect>())
+  const flipAnims = useRef(new Map<string, Animation>())
+
+  // Long press opens the per-habit settings sheet; the click that ends the
+  // press must not fall through to the tag modal.
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressFired = useRef(false)
 
   const fetchHabits = (): void => {
     fetch('/api/habits')
@@ -193,11 +217,49 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
     }
   }, [])
 
+  // Animate cards from their previous position to the new one (FLIP), so the
+  // preview reorder reads as movement rather than a jump.
+  useLayoutEffect(() => {
+    // Cancel anything in flight FIRST: a running animation offsets the element,
+    // and measuring it would fold that offset into the next delta — which is
+    // what made repeated dragover renders compound into a jitter.
+    for (const anim of flipAnims.current.values()) {
+      anim.cancel()
+    }
+    flipAnims.current.clear()
+
+    const rects = new Map<string, DOMRect>()
+    for (const [name, el] of cardRefs.current) {
+      rects.set(name, el.getBoundingClientRect())
+    }
+
+    for (const [name, el] of cardRefs.current) {
+      const rect = rects.get(name)
+      const old = prevRects.current.get(name)
+      // The dragged card is already following the cursor — leave it alone
+      if (!rect || !old || name === draggingName) continue
+
+      const dx = old.left - rect.left
+      const dy = old.top - rect.top
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue
+
+      const anim = el.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0px, 0px)' }],
+        { duration: 200, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+      )
+      flipAnims.current.set(name, anim)
+      anim.addEventListener('finish', () => flipAnims.current.delete(name))
+    }
+
+    prevRects.current = rects
+  })
+
   // Listen for Escape key to close modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setActiveModalHabit(null)
+        setSettingsHabit(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -206,7 +268,152 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
     }
   }, [])
 
+  /** Writes a habit's display settings straight into habit-tags.json. */
+  const patchHabitSettings = async (
+    habit: Habit,
+    patch: { view?: ViewMode; showStreak?: boolean; strictNoSkip?: boolean }
+  ) => {
+    // Optimistic: reflect the change before the file write round-trips
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        habits: prev.habits.map((h) =>
+          h.id === habit.id
+            ? {
+                ...h,
+                view: patch.view ?? h.view,
+                showStreak: patch.showStreak ?? h.showStreak,
+                strictStreak: patch.strictNoSkip ?? h.strictStreak,
+                streak: (patch.strictNoSkip ?? h.strictStreak) ? h.streakStrict : h.streakLenient,
+              }
+            : h
+        ),
+      }
+    })
+    setSettingsHabit((prev) =>
+      prev?.id === habit.id
+        ? {
+            ...prev,
+            view: patch.view ?? prev.view,
+            showStreak: patch.showStreak ?? prev.showStreak,
+            strictStreak: patch.strictNoSkip ?? prev.strictStreak,
+          }
+        : prev
+    )
+
+    try {
+      const res = await fetch('/api/habits/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ habitName: habit.name, habit: patch }),
+      })
+      if (!res.ok) fetchHabits()
+    } catch {
+      fetchHabits()
+    }
+  }
+
+  /** Writes a tag's colour into habit-tags.json under that habit. */
+  const patchTagColor = async (habit: Habit, tag: string, color: string) => {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        habits: prev.habits.map((h) =>
+          h.id === habit.id
+            ? {
+                ...h,
+                availableTags: h.availableTags.map((t) => (t.tag === tag ? { ...t, color } : t)),
+              }
+            : h
+        ),
+      }
+    })
+    setSettingsHabit((prev) =>
+      prev?.id === habit.id
+        ? { ...prev, availableTags: prev.availableTags.map((t) => (t.tag === tag ? { ...t, color } : t)) }
+        : prev
+    )
+
+    try {
+      const res = await fetch('/api/habits/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ habitName: habit.name, tags: { [tag]: color } }),
+      })
+      if (!res.ok) fetchHabits()
+    } catch {
+      fetchHabits()
+    }
+  }
+
+  /** Persists a panel-level preference into habit-tags.json. */
+  const patchUi = async (patch: HabitUiConfig) => {
+    setData((prev) => (prev ? { ...prev, ui: { ...prev.ui, ...patch } } : prev))
+
+    try {
+      const res = await fetch('/api/habits/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ui: patch }),
+      })
+      if (!res.ok) fetchHabits()
+    } catch {
+      fetchHabits()
+    }
+  }
+
+  /**
+   * Shows, while still dragging, where the card would land. The slot comes from
+   * which half of the target the pointer is over, so holding still can never
+   * flip-flop between two orders.
+   */
+  const previewMove = (targetName: string, after: boolean) => {
+    if (!data || !draggingName || draggingName === targetName) return
+
+    // Reorder the full list, not just the visible subset, so hidden habits keep
+    // their place when "hide done" is switched back off.
+    const base = previewOrder ?? sortByConfigOrder(data.habits, data.ui.order).map((h) => h.name)
+    const next = base.filter((n) => n !== draggingName)
+    const idx = next.indexOf(targetName)
+    if (idx < 0) return
+
+    next.splice(after ? idx + 1 : idx, 0, draggingName)
+    if (next.every((n, i) => n === base[i])) return
+    setPreviewOrder(next)
+  }
+
+  const endDrag = (commit: boolean) => {
+    const order = previewOrder
+    setDraggingName(null)
+    setPreviewOrder(null)
+    if (commit && order) {
+      void patchUi({ order })
+    }
+  }
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }
+
+  const startLongPress = (habit: Habit) => {
+    clearLongPress()
+    longPressFired.current = false
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true
+      setSettingsHabit(habit)
+    }, LONG_PRESS_MS)
+  }
+
   const handleCardClick = (habit: Habit) => {
+    if (longPressFired.current) {
+      longPressFired.current = false
+      return
+    }
     if (habit.availableTags.length > 0) {
       setActiveModalHabit(habit)
     } else {
@@ -227,7 +434,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
         ...prev,
         habits: prev.habits.map((h) => {
           if (h.id !== habit.id) return h
-          const newHistory = h.history7.map((day) =>
+          const newHistory = h.history.map((day) =>
             day.isToday ? { ...day, done: newTodayDone } : day
           )
           let newStreak = h.streak
@@ -240,7 +447,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
             ...h,
             todayDone: newTodayDone,
             streak: newStreak,
-            history7: newHistory,
+            history: newHistory,
           }
         }),
       }
@@ -282,7 +489,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
         ...prev,
         habits: prev.habits.map((h) => {
           if (h.id !== habit.id) return h
-          const newHistory = h.history7.map((day) =>
+          const newHistory = h.history.map((day) =>
             day.isToday ? { ...day, done: true, color: tagColor, tagText } : day
           )
           let newStreak = h.streak
@@ -294,7 +501,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
             todayDone: true,
             todayColor: tagColor,
             streak: newStreak,
-            history7: newHistory,
+            history: newHistory,
           }
         }),
       }
@@ -334,7 +541,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
         ...prev,
         habits: prev.habits.map((h) => {
           if (h.id !== habit.id) return h
-          const newHistory = h.history7.map((day) =>
+          const newHistory = h.history.map((day) =>
             day.isToday ? { ...day, done: false, color: null, tagText: null } : day
           )
           const newStreak = Math.max(0, h.streak - 1)
@@ -343,7 +550,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
             todayDone: false,
             todayColor: null,
             streak: newStreak,
-            history7: newHistory,
+            history: newHistory,
           }
         }),
       }
@@ -381,123 +588,55 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
     return <div className="h-loading">Loading habits…</div>
   }
 
+  const hideCompleted = data.ui.hideCompleted ?? false
+  const twoColumns = data.ui.twoColumns ?? false
+  // While dragging, the preview order drives the layout so cards slide into the
+  // slot the drop would give them.
+  const ordered = sortByConfigOrder(data.habits, previewOrder ?? data.ui.order)
+  const visibleHabits = hideCompleted ? ordered.filter((h) => !h.todayDone) : ordered
+
   return (
     <div className="h-root">
-      <div className="h-grid">
-        {data.habits.map((h) => {
-          // Render Recharts Trend Card ONLY when Kuma is folded.
-          // When Kuma un-collapses (expands), revert to standard dots row to save vertical space!
-          const isChartHabit =
-            isKumaFolded &&
-            (h.visualization === 'chart' ||
-              h.name.toLowerCase().includes('woke') ||
-              h.name.toLowerCase().includes('read') ||
-              h.name.toLowerCase().includes('quran'))
+      <div className="h-toolbar">
+        <label className="h-check">
+          <input
+            type="checkbox"
+            checked={hideCompleted}
+            onChange={(e) => {
+              void patchUi({ hideCompleted: e.target.checked })
+            }}
+          />
+          <span>Hide done</span>
+        </label>
 
-          if (isChartHabit) {
-            // Render Full Expanded Recharts Trend Card with LabelList (direct values above bars)
-            const isWake = h.name.toLowerCase().includes('woke')
-            const chartData = h.history7.map((day) => {
-              if (isWake) {
-                const parsed = parseWakeUpTime(day.tagText)
-                return {
-                  date: day.date,
-                  dayName: day.dayName,
-                  dayNum: day.dayNum,
-                  done: day.done,
-                  val: parsed?.val ?? (day.done ? 6.0 : 9.0),
-                  chartVal: parsed?.val ? 10.0 - parsed.val : day.done ? 4.0 : 1.0,
-                  label: parsed?.label ?? (day.done ? 'DONE' : ''),
-                  color: day.color ?? '#22c55e',
-                }
-              }
-              const isQuran = h.name.toLowerCase().includes('quran')
-              const parsed = parseDurationMinutes(day.tagText)
-              const mins = parsed?.val ?? (day.done ? 30 : 0)
-              const defaultColor = getReadingColorForMinutes(mins, isQuran)
-              return {
-                date: day.date,
-                dayName: day.dayName,
-                dayNum: day.dayNum,
-                done: day.done,
-                val: mins,
-                chartVal: mins,
-                label: parsed?.label ?? (day.done ? '30m' : ''),
-                color: day.color ?? defaultColor,
-              }
-            })
+        <label className="h-check">
+          <input
+            type="checkbox"
+            checked={twoColumns}
+            onChange={(e) => {
+              void patchUi({ twoColumns: e.target.checked })
+            }}
+          />
+          <span>2 per row</span>
+        </label>
+      </div>
 
-            const trendCardStyle = h.todayDone
-              ? {
-                  background: `linear-gradient(135deg, ${h.todayColor ?? '#22c55e'}38 0%, ${h.todayColor ?? '#22c55e'}14 100%)`,
-                  borderColor: `${h.todayColor ?? '#22c55e'}77`,
-                  boxShadow: `0 0 20px ${h.todayColor ?? '#22c55e'}30, inset 0 0 15px ${h.todayColor ?? '#22c55e'}15`,
-                }
-              : undefined
+      <div
+        className={`h-grid ${isKumaFolded ? '' : 'h-grid--compact'} ${twoColumns ? 'h-grid--two' : ''}`}
+      >
+        {visibleHabits.map((h) => {
+          // An expanded Kuma leaves no room for graphs, so every habit falls
+          // back to the dot row until it collapses again. The saved setting in
+          // habit-tags.json is untouched.
+          const mode: ViewMode = isKumaFolded ? h.view : 'classic'
+          const showStreak = h.showStreak
+          const strictStreak = h.strictStreak
+          const streak = strictStreak ? h.streakStrict : h.streakLenient
+          const allWeeks = chunkIntoWeeks(h.history)
+          // Half the width means half the history, so the squares stay readable
+          const weeks = twoColumns ? allWeeks.slice(Math.floor(allWeeks.length / 2)) : allWeeks
+          const monthLabels = getMonthLabels(weeks)
 
-            return (
-              <div
-                key={h.id}
-                className={`h-trend-card h-trend-card--primary ${h.todayDone ? 'h-trend-card--done' : ''}`}
-                style={trendCardStyle}
-                onClick={() => {
-                  handleCardClick(h)
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    handleCardClick(h)
-                  }
-                }}
-                title="Click to log or update today's status"
-              >
-                <div className="h-trend-header">
-                  <div className="h-trend-title">
-                    <span>{h.name}</span>
-                    {h.star && <span className="h-star" title="Starred">★</span>}
-                  </div>
-                  <div className="h-trend-metrics">
-                    {h.showStreak !== false && (
-                      <div className="h-streak" title={`${h.streak} day streak`}>
-                        {h.streak > 0 ? (
-                          <span className={h.todayDone ? 'h-streak-active' : 'h-streak-pending'}>
-                            {h.streak}
-                          </span>
-                        ) : (
-                          <span className="h-streak-zero">0</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="h-chart-wrapper">
-                  <ResponsiveContainer width="100%" height={125}>
-                    <BarChart data={chartData} margin={{ top: 18, right: 6, left: 6, bottom: 0 }}>
-                      <XAxis dataKey="dayName" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={{ stroke: 'var(--border)' }} />
-                      <RechartsTooltip content={<CustomChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.06)' }} />
-                      {isWake && <ReferenceLine y={4} stroke="rgba(255,255,255,0.2)" strokeDasharray="3 3" />}
-                      <Bar dataKey="chartVal" radius={[4, 4, 0, 0]}>
-                        <LabelList
-                          dataKey="label"
-                          position="top"
-                          fill="var(--text-primary)"
-                          fontSize={10}
-                          style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}
-                        />
-                        {chartData.map((d) => (
-                          <Cell key={d.date} fill={d.done ? d.color : 'rgba(255,255,255,0.08)'} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )
-          }
-
-          // Standard Habit Card (Rendered for non-chart habits, or when Kuma is expanded)
           const cardStyle =
             h.todayDone && h.todayColor
               ? {
@@ -509,10 +648,50 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
           return (
             <div
               key={h.id}
-              className={`h-card ${h.todayDone ? 'h-card--done' : ''}`}
+              ref={(el) => {
+                if (el) cardRefs.current.set(h.name, el)
+                else cardRefs.current.delete(h.name)
+              }}
+              className={`h-card h-card--${mode} ${h.todayDone ? 'h-card--done' : ''} ${
+                draggingName === h.name ? 'h-card--dragging' : ''
+              }`}
               style={cardStyle}
               onClick={() => {
                 handleCardClick(h)
+              }}
+              onPointerDown={() => {
+                startLongPress(h)
+              }}
+              onPointerUp={clearLongPress}
+              onPointerLeave={clearLongPress}
+              onPointerCancel={clearLongPress}
+              draggable={dragArmedName === h.name}
+              onDragStart={(e) => {
+                clearLongPress()
+                setDraggingName(h.name)
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                const rect = e.currentTarget.getBoundingClientRect()
+                const after = twoColumns
+                  ? e.clientX > rect.left + rect.width / 2
+                  : e.clientY > rect.top + rect.height / 2
+                previewMove(h.name, after)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                endDrag(true)
+                setDragArmedName(null)
+              }}
+              onDragEnd={() => {
+                // Fires after drop too; committing there already cleared the preview
+                endDrag(false)
+                setDragArmedName(null)
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault()
               }}
               role="button"
               tabIndex={0}
@@ -521,67 +700,306 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
                   handleCardClick(h)
                 }
               }}
-              title="Click to log or update today's tag"
+              title="Click to log today · hold for habit settings"
             >
-              <div className="h-card-left">
-                <span className="h-name">
-                  {h.name}
-                  {h.star && <span className="h-star" title="Starred">★</span>}
-                </span>
-              </div>
+              <span
+                className="h-drag-handle"
+                title="Drag to reorder"
+                onPointerDown={(e) => {
+                  // Arm the drag without arming the card's long-press or click
+                  e.stopPropagation()
+                  setDragArmedName(h.name)
+                }}
+                onPointerUp={(e) => {
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                }}
+              >
+                <svg width="14" height="18" viewBox="0 0 14 18" aria-hidden="true">
+                  {[4, 9, 14].map((cy) =>
+                    [4, 10].map((cx) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.5" fill="currentColor" />)
+                  )}
+                </svg>
+              </span>
 
-              <div className="h-card-right">
-                <div className="h-history">
-                  {h.history7.map((day) => {
-                    const statusLabel = day.done ? 'Done' : day.isSkipped ? 'Skipped' : 'Missed'
-                    const dotStyle =
-                      day.done && day.color
-                        ? {
-                            background: day.color,
-                            borderColor: day.color,
-                            boxShadow: `0 0 10px ${day.color}aa`,
-                          }
-                        : undefined
-
-                    return (
-                      <div
-                        key={day.date}
-                        className={`h-day-col ${day.isToday ? 'h-day-col--today' : ''}`}
-                        title={`${day.dayName} ${day.dayNum}: ${statusLabel}`}
-                      >
-                        <div
-                          className={`h-day-dot ${
-                            day.done
-                              ? 'h-day-dot--done'
-                              : day.isSkipped
-                              ? 'h-day-dot--skipped'
-                              : ''
-                          } ${day.isToday ? 'h-day-dot--today' : ''}`}
-                          style={dotStyle}
-                        >
-                          {(day.done || day.isSkipped) && <span className="h-dot-inner" />}
-                        </div>
-                      </div>
-                    )
-                  })}
+              {mode === 'classic' && (
+                <div className="h-card-left">
+                  <span className="h-name">
+                    {h.name}
+                    {h.star && <span className="h-star" title="Starred">★</span>}
+                  </span>
                 </div>
+              )}
 
-                {h.showStreak !== false && (
-                  <div className="h-streak" title={`${h.streak} day streak`}>
-                    {h.streak > 0 ? (
-                      <span className={h.todayDone ? 'h-streak-active' : 'h-streak-pending'}>
-                        {h.streak}
+              {mode === 'graph' ? (
+                <>
+                  <span className="h-title-overlay">
+                    {h.name}
+                    {h.star && <span className="h-star" title="Starred">★</span>}
+                  </span>
+
+                  {showStreak && (
+                    <span
+                      className="h-streak-overlay"
+                      title={`${streak} day streak${strictStreak ? ' (a missed day resets it)' : ' (one missed day forgiven)'}`}
+                    >
+                      <span
+                        className={
+                          streak === 0
+                            ? 'h-streak-zero'
+                            : h.todayDone
+                            ? 'h-streak-active'
+                            : 'h-streak-pending'
+                        }
+                      >
+                        {streak}
                       </span>
-                    ) : (
-                      <span className="h-streak-zero">0</span>
-                    )}
+                    </span>
+                  )}
+
+                  <div className="h-contrib">
+                  <div className="h-contrib-weeks">
+                    {weeks.map((week) => (
+                      <div key={week[0].date} className="h-contrib-week">
+                        {Array.from({ length: 7 }, (_, row) => {
+                          const day = week.find((d) => d.dow === row)
+                          if (!day) {
+                            return <span key={row} className="h-contrib-cell h-contrib-cell--empty" />
+                          }
+
+                          const color = getDayColor(h, day)
+                          const status = day.done
+                            ? getDayLabel(h, day)
+                            : day.isSkipped
+                            ? 'Skipped'
+                            : 'Missed'
+
+                          const cellStyle = day.done
+                            ? { background: color, borderColor: color, boxShadow: `0 0 6px ${color}66` }
+                            : undefined
+
+                          return (
+                            <span
+                              key={day.date}
+                              className={`h-contrib-cell ${
+                                day.done
+                                  ? 'h-contrib-cell--done'
+                                  : day.isSkipped
+                                  ? 'h-contrib-cell--skipped'
+                                  : 'h-contrib-cell--missed'
+                              } ${day.isToday ? 'h-contrib-cell--today' : ''}`}
+                              style={cellStyle}
+                              title={`${day.dayName} ${day.dayNum}: ${status}`}
+                            />
+                          )
+                        })}
+                      </div>
+                    ))}
+                    </div>
+
+                    {/* Month captions sit below the squares — the title owns the top band */}
+                    <div className="h-contrib-months">
+                      {monthLabels.map((label, i) => (
+                        <span key={weeks[i][0].date} className="h-contrib-month">
+                          {label ?? ''}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                <div className="h-card-right">
+                  <div className="h-history">
+                    {h.history.slice(-CLASSIC_DAYS).map((day) => {
+                      const statusLabel = day.done ? 'Done' : day.isSkipped ? 'Skipped' : 'Missed'
+                      const dotStyle =
+                        day.done && day.color
+                          ? {
+                              background: day.color,
+                              borderColor: day.color,
+                              boxShadow: `0 0 10px ${day.color}aa`,
+                            }
+                          : undefined
+
+                      return (
+                        <div
+                          key={day.date}
+                          className={`h-day-col ${day.isToday ? 'h-day-col--today' : ''}`}
+                          title={`${day.dayName} ${day.dayNum}: ${statusLabel}`}
+                        >
+                          <div
+                            className={`h-day-dot ${
+                              day.done
+                                ? 'h-day-dot--done'
+                                : day.isSkipped
+                                ? 'h-day-dot--skipped'
+                                : ''
+                            } ${day.isToday ? 'h-day-dot--today' : ''}`}
+                            style={dotStyle}
+                          >
+                            {(day.done || day.isSkipped) && <span className="h-dot-inner" />}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {showStreak && (
+                    <div className="h-streak" title={`${streak} day streak`}>
+                      {streak > 0 ? (
+                        <span className={h.todayDone ? 'h-streak-active' : 'h-streak-pending'}>
+                          {streak}
+                        </span>
+                      ) : (
+                        <span className="h-streak-zero">0</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )
         })}
       </div>
+
+      {/* Per-habit display settings (opened by long press) */}
+      {settingsHabit && (
+        <div
+          className="h-modal-backdrop"
+          onClick={() => {
+            setSettingsHabit(null)
+          }}
+        >
+          <div
+            className="h-modal-card"
+            onClick={(e) => {
+              e.stopPropagation()
+            }}
+          >
+            <div className="h-modal-header">
+              <span className="h-modal-title">{settingsHabit.name}</span>
+              <span className="h-modal-sub">Display settings for this habit</span>
+            </div>
+
+            {(() => {
+              const mode: ViewMode = settingsHabit.view
+              const showStreak = settingsHabit.showStreak
+              const strictStreak = settingsHabit.strictStreak
+
+              return (
+                <div className="h-settings">
+                  <div className="h-setting-row">
+                    <span className="h-setting-label">View</span>
+                    <div className="h-seg">
+                      <button
+                        type="button"
+                        className={`h-seg-btn ${mode === 'graph' ? 'h-seg-btn--on' : ''}`}
+                        onClick={() => {
+                          void patchHabitSettings(settingsHabit, { view: 'graph' })
+                        }}
+                      >
+                        Contribution graph
+                      </button>
+                      <button
+                        type="button"
+                        className={`h-seg-btn ${mode === 'classic' ? 'h-seg-btn--on' : ''}`}
+                        onClick={() => {
+                          void patchHabitSettings(settingsHabit, { view: 'classic' })
+                        }}
+                      >
+                        Classic dots
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="h-setting-row">
+                    <span className="h-setting-label">Show streak</span>
+                    <div className="h-seg">
+                      <button
+                        type="button"
+                        className={`h-seg-btn ${showStreak ? 'h-seg-btn--on' : ''}`}
+                        onClick={() => {
+                          void patchHabitSettings(settingsHabit, { showStreak: true })
+                        }}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        className={`h-seg-btn ${showStreak ? '' : 'h-seg-btn--on'}`}
+                        onClick={() => {
+                          void patchHabitSettings(settingsHabit, { showStreak: false })
+                        }}
+                      >
+                        No
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="h-setting-row">
+                    <span className="h-setting-label">Missed day resets streak</span>
+                    <div className="h-seg">
+                      <button
+                        type="button"
+                        className={`h-seg-btn ${strictStreak ? 'h-seg-btn--on' : ''}`}
+                        onClick={() => {
+                          void patchHabitSettings(settingsHabit, { strictNoSkip: true })
+                        }}
+                      >
+                        Yes ({settingsHabit.streakStrict})
+                      </button>
+                      <button
+                        type="button"
+                        className={`h-seg-btn ${strictStreak ? '' : 'h-seg-btn--on'}`}
+                        onClick={() => {
+                          void patchHabitSettings(settingsHabit, { strictNoSkip: false })
+                        }}
+                      >
+                        No, forgive one ({settingsHabit.streakLenient})
+                      </button>
+                    </div>
+                  </div>
+
+                  {settingsHabit.availableTags.length > 0 && (
+                    <div className="h-setting-row">
+                      <span className="h-setting-label">Tag colours</span>
+                      <div className="h-tag-colors">
+                        {settingsHabit.availableTags.map((t) => (
+                          <label key={t.tag} className="h-tag-color" style={{ borderColor: `${t.color}66` }}>
+                            <input
+                              type="color"
+                              value={t.color}
+                              onChange={(e) => {
+                                void patchTagColor(settingsHabit, t.tag, e.target.value)
+                              }}
+                            />
+                            <span className="h-tag-color-swatch" style={{ background: t.color }} />
+                            <span className="h-tag-color-name">{t.tag}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            <div className="h-modal-actions">
+              <button
+                type="button"
+                className="h-btn h-btn--secondary"
+                onClick={() => {
+                  setSettingsHabit(null)
+                }}
+              >
+                Done (Esc)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tag Selection Modal */}
       {activeModalHabit && (
@@ -684,7 +1102,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
         .h-err,
         .h-loading {
           font-family: var(--font-mono);
-          font-size: 17px;
+          font-size: 19px;
           color: var(--text-muted);
           display: flex;
           gap: 6px;
@@ -694,14 +1112,120 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
           color: var(--down);
         }
 
+        .h-toolbar {
+          display: flex;
+          justify-content: flex-end;
+          align-items: center;
+          flex-shrink: 0;
+        }
+
+        .h-check {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          font-family: var(--font-mono);
+          font-size: 14px;
+          letter-spacing: 0.06em;
+          color: var(--text-muted);
+          cursor: pointer;
+          user-select: none;
+        }
+
+        .h-check:hover {
+          color: var(--text-secondary);
+        }
+
+        .h-check input {
+          width: 14px;
+          height: 14px;
+          accent-color: #38bdf8;
+          cursor: pointer;
+        }
+
+        /* One habit per row */
         .h-grid {
           display: flex;
           flex-direction: column;
           gap: 8px;
+          --cell-gap: 3px;
+        }
+
+        /* Two per row */
+        /* Same square size as one-per-row — the cards show fewer weeks instead */
+        .h-grid--two {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          align-content: start;
+        }
+
+        .h-grid--two .h-title-overlay {
+          font-size: 28px;
+        }
+
+        .h-card--dragging {
+          opacity: 0.45;
+          border-color: #38bdf8 !important;
+        }
+
+        /* Grip: hidden until the card is hovered, and the only way to start a drag */
+        .h-drag-handle {
+          position: absolute;
+          top: 4px;
+          right: 4px;
+          z-index: 4;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 4px 2px;
+          border-radius: 4px;
+          color: var(--text-muted);
+          opacity: 0;
+          cursor: grab;
+          transition: opacity 0.15s ease, color 0.15s ease;
+        }
+
+        .h-card:hover .h-drag-handle {
+          opacity: 0.75;
+        }
+
+        .h-drag-handle:hover {
+          opacity: 1 !important;
+          color: #38bdf8;
+          background: rgba(255, 255, 255, 0.06);
+        }
+
+        .h-drag-handle:active {
+          cursor: grabbing;
+        }
+
+        .h-grid--compact {
+          --cell-gap: 2px;
+          gap: 6px;
+        }
+
+        /* Kuma expanded: drop the month strip and tighten everything */
+        .h-grid--compact .h-contrib-months {
+          display: none;
+        }
+
+        .h-grid--compact .h-card {
+          padding: 5px 10px;
+        }
+
+        .h-grid--compact .h-name {
+          font-size: 16px;
+        }
+
+        /* Square size follows the graph width, so narrowing the graph is what
+           buys back vertical space when Kuma takes over the screen. */
+        .h-grid--compact .h-contrib {
+          max-width: 62%;
+          margin-left: auto;
         }
 
         /* Clickable Card layout */
         .h-card {
+          position: relative;
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -740,28 +1264,160 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
           display: flex;
           align-items: center;
           gap: 10px;
-          min-width: 140px;
+          width: 170px;
           flex-shrink: 0;
+          overflow: hidden;
+        }
+
+        .h-grid--compact .h-card-left {
+          width: 120px;
         }
 
         .h-name {
-          font-size: 22px;
-          font-weight: 800;
+          font-size: 20px;
+          font-weight: 500;
           color: #ffffff;
           letter-spacing: 0.02em;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          display: flex;
-          align-items: center;
-          gap: 8px;
+          min-width: 0;
+          display: block;
         }
 
         .h-star {
           color: #f59e0b;
-          font-size: 14px;
+          font-size: 15px;
+          margin-left: 6px;
         }
 
+        /* Title and streak float above the squares, each on a dark fade so the
+           cells underneath stay readable. */
+        .h-title-overlay,
+        .h-streak-overlay {
+          position: absolute;
+          top: 0;
+          display: flex;
+          align-items: flex-start;
+          pointer-events: none;
+          z-index: 2;
+          font-family: inherit;
+        }
+
+        .h-title-overlay {
+          left: 0;
+          /* Fades out around the text itself rather than banding the whole top */
+          padding: 7px 44px 20px 14px;
+          background: radial-gradient(
+            ellipse at 20% 40%,
+            rgba(6, 6, 8, 0.88) 0%,
+            rgba(6, 6, 8, 0.6) 45%,
+            rgba(6, 6, 8, 0) 78%
+          );
+          font-size: 36px;
+          font-weight: 400;
+          letter-spacing: 0.01em;
+          color: #ffffff;
+          white-space: nowrap;
+          text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+        }
+
+        /* Sits in the gutter the graph reserves on the right, so it never
+           covers a square. */
+        .h-streak-overlay {
+          right: 0;
+          bottom: 0;
+          align-items: center;
+          justify-content: flex-end;
+          width: 54px;
+          padding-right: 14px;
+        }
+
+        .h-grid--compact .h-streak-overlay {
+          width: 40px;
+          padding-right: 10px;
+        }
+
+        .h-grid--compact .h-title-overlay {
+          font-size: 26px;
+          padding-bottom: 16px;
+        }
+
+        /* GitHub-style contribution graph — the week columns flex, so the grid
+           always spans the full remaining width of the row and the square size
+           follows from it. */
+        .h-contrib {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          flex: 1;
+          min-width: 0;
+          /* Gutter for the streak overlay */
+          padding-right: 40px;
+        }
+
+        .h-grid--compact .h-contrib {
+          padding-right: 30px;
+        }
+
+        .h-contrib-months,
+        .h-contrib-weeks {
+          display: flex;
+          gap: var(--cell-gap);
+          width: 100%;
+        }
+
+        .h-contrib-months {
+          height: 12px;
+        }
+
+        .h-contrib-month {
+          flex: 1 1 0;
+          min-width: 0;
+          font-family: var(--font-mono);
+          font-size: 11px;
+          line-height: 12px;
+          color: var(--text-muted);
+          white-space: nowrap;
+        }
+
+        .h-contrib-week {
+          display: flex;
+          flex-direction: column;
+          gap: var(--cell-gap);
+          flex: 1 1 0;
+          min-width: 0;
+        }
+
+        .h-contrib-cell {
+          width: 100%;
+          aspect-ratio: 1 / 1;
+          border-radius: 2px;
+          border: 1px solid transparent;
+          box-sizing: border-box;
+        }
+
+        .h-contrib-cell--missed {
+          background: rgba(255, 255, 255, 0.06);
+          border-color: rgba(255, 255, 255, 0.08);
+        }
+
+        .h-contrib-cell--skipped {
+          background: rgba(107, 114, 128, 0.45);
+          border-color: rgba(107, 114, 128, 0.55);
+        }
+
+        .h-contrib-cell--empty {
+          background: transparent;
+          border-color: transparent;
+        }
+
+        .h-contrib-cell--today {
+          outline: 1px solid #38bdf8;
+          outline-offset: 1px;
+        }
+
+        /* Classic dot row (long-press to switch a habit back to this) */
         .h-card-right {
           display: flex;
           align-items: center;
@@ -787,18 +1443,6 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
           align-items: center;
           gap: 3px;
           flex-shrink: 0;
-        }
-
-        .h-day-label {
-          font-family: var(--font-mono);
-          font-size: 12px;
-          color: var(--text-muted);
-          text-transform: uppercase;
-        }
-
-        .h-day-col--today .h-day-label {
-          color: var(--accent);
-          font-weight: 700;
         }
 
         .h-day-dot {
@@ -848,118 +1492,29 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
 
         .h-streak-active {
           font-family: var(--font-mono);
-          font-size: 24px;
-          font-weight: 800;
+          font-size: 26px;
+          font-weight: 500;
           color: #ff8c38;
-          display: inline-block;
           text-align: right;
           letter-spacing: -0.02em;
         }
 
         .h-streak-pending {
           font-family: var(--font-mono);
-          font-size: 24px;
-          font-weight: 800;
+          font-size: 26px;
+          font-weight: 500;
           color: #6b7280;
-          display: inline-block;
           text-align: right;
           letter-spacing: -0.02em;
         }
 
         .h-streak-zero {
           font-family: var(--font-mono);
-          font-size: 20px;
-          font-weight: 600;
+          font-size: 22px;
+          font-weight: 400;
           color: var(--text-muted);
-          display: inline-block;
           text-align: right;
           opacity: 0.65;
-        }
-
-        /* Statistical Recharts Trend Cards */
-        .h-trend-card {
-          position: relative;
-          background: var(--surface);
-          border: 1px solid var(--border);
-          border-radius: var(--radius-sm);
-          padding: 12px 14px;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          cursor: pointer;
-          transition: background 0.2s ease, border-color 0.2s ease;
-        }
-
-        .h-trend-card:hover {
-          background: var(--surface-hover);
-          border-color: var(--border-bright);
-        }
-
-        .h-trend-card--done {
-          background: linear-gradient(135deg, rgba(34, 197, 94, 0.22) 0%, rgba(34, 197, 94, 0.08) 100%);
-          border-color: rgba(34, 197, 94, 0.55);
-          box-shadow: 0 0 20px rgba(34, 197, 94, 0.2), inset 0 0 15px rgba(34, 197, 94, 0.1);
-        }
-
-        .h-trend-header {
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          gap: 10px;
-          min-height: 28px;
-        }
-
-        .h-trend-title {
-          position: absolute;
-          top: 10px;
-          left: 12px;
-          z-index: 5;
-          font-size: 22px;
-          font-weight: 800;
-          letter-spacing: 0.03em;
-          color: #ffffff;
-          padding: 0;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          background: transparent;
-          border: none;
-        }
-
-        .h-trend-metrics {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .h-metric-badge {
-          font-family: var(--font-mono);
-          font-size: 18px;
-          font-weight: 800;
-          padding: 0;
-          background: transparent;
-          color: #ffffff;
-          border: none;
-          letter-spacing: 0.02em;
-        }
-
-        .h-metric-badge--green {
-          background: transparent;
-          color: #86efac;
-          border: none;
-          text-shadow: 0 0 10px rgba(134, 239, 172, 0.3);
-        }
-
-        .h-metric-badge--cyan {
-          background: transparent;
-          color: #7dd3fc;
-          border: none;
-          text-shadow: 0 0 10px rgba(125, 211, 252, 0.3);
-        }
-
-        .h-chart-wrapper {
-          width: 100%;
-          height: 125px;
         }
 
         /* Tag Selection Modal */
@@ -979,12 +1534,12 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
           background: #0d0d0d;
           border: 1px solid var(--border-bright);
           border-radius: var(--radius);
-          padding: 24px;
+          padding: 32px;
           width: 100%;
-          max-width: 440px;
+          max-width: 640px;
           display: flex;
           flex-direction: column;
-          gap: 18px;
+          gap: 22px;
           box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 2px rgba(255, 255, 255, 0.2);
         }
 
@@ -995,14 +1550,108 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
         }
 
         .h-modal-title {
-          font-size: 22px;
-          font-weight: 600;
+          font-size: 28px;
+          font-weight: 400;
           color: var(--text-primary);
         }
 
         .h-modal-sub {
-          font-size: 15px;
+          font-size: 18px;
           color: var(--text-muted);
+        }
+
+        /* Long-press settings sheet */
+        .h-settings {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+
+        .h-setting-row {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .h-setting-label {
+          font-size: 16px;
+          color: var(--text-muted);
+          letter-spacing: 0.04em;
+        }
+
+        .h-seg {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .h-seg-btn {
+          flex: 1;
+          min-width: 120px;
+          padding: 8px 12px;
+          border-radius: var(--radius-sm);
+          background: var(--surface);
+          border: 1px solid var(--border);
+          color: var(--text-muted);
+          font-size: 17px;
+          font-weight: 400;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+
+        .h-seg-btn:hover {
+          background: var(--surface-hover);
+          border-color: var(--border-bright);
+        }
+
+        .h-tag-colors {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .h-tag-color {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 12px;
+          border-radius: var(--radius-sm);
+          background: var(--surface);
+          border: 1px solid var(--border);
+          cursor: pointer;
+        }
+
+        .h-tag-color:hover {
+          background: var(--surface-hover);
+        }
+
+        /* The native swatch is the click target, drawn over our own swatch */
+        .h-tag-color input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          width: 100%;
+          height: 100%;
+          cursor: pointer;
+        }
+
+        .h-tag-color-swatch {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+
+        .h-tag-color-name {
+          font-size: 16px;
+          color: var(--text-secondary);
+        }
+
+        .h-seg-btn--on {
+          background: rgba(56, 189, 248, 0.16);
+          border-color: rgba(56, 189, 248, 0.55);
+          color: #e0f2fe;
         }
 
         .h-tag-grid {
@@ -1039,8 +1688,8 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
 
         .h-tag-label {
           font-family: var(--font-mono);
-          font-size: 16px;
-          font-weight: 600;
+          font-size: 18px;
+          font-weight: 400;
         }
 
         .h-modal-actions {
@@ -1056,7 +1705,7 @@ export default function Habits({ isKumaFolded = true }: HabitsProps) {
         .h-btn {
           padding: 8px 14px;
           border-radius: var(--radius-sm);
-          font-size: 14px;
+          font-size: 17px;
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s ease;

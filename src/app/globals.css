@@ -27,6 +27,12 @@
 
   --radius: 12px;
   --radius-sm: 8px;
+
+  /* Google Sans when the machine has it installed, Outfit otherwise.
+     --font-mono keeps its name so component styles stay untouched; digits stay
+     aligned via tabular-nums below. */
+  --font-sans: 'Google Sans', 'Product Sans', var(--font-geometric), system-ui, sans-serif;
+  --font-mono: 'Google Sans', 'Product Sans', var(--font-geometric), system-ui, sans-serif;
 }
 
 html, body {
@@ -35,6 +41,7 @@ html, body {
   background: var(--bg);
   color: var(--text-primary);
   font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }

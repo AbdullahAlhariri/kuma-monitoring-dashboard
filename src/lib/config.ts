@@ -26,10 +26,10 @@ export const config = {
     baseUrl: env('BEAVER_BASE_URL'),
     token: env('BEAVER_TOKEN'),
     refetchIntervalMs: parseInt(env('BEAVER_REFETCH_INTERVAL_MS', '10000'), 10),
+    contributionWeeks: parseInt(env('BEAVER_CONTRIBUTION_WEEKS', '52'), 10),
   },
   mawaqit: {
     enabled: env('MAWAQIT_ENABLED', 'true') === 'true',
     url: env('MAWAQIT_URL'),
-    configPath: env('MAWAQIT_CONFIG_PATH', 'mawaqit-config.json'),
   },
 } as const

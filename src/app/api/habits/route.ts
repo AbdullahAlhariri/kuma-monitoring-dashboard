@@ -1,7 +1,14 @@
-import fs from 'fs'
-import path from 'path'
 import { NextResponse } from 'next/server'
 import { config } from '@/lib/config'
+import {
+  getHabitSpec,
+  loadTagConfig,
+  type HabitConfigEntry,
+  type HabitSpec,
+  type HabitUiConfig,
+  type HabitView,
+  type TagConfig,
+} from '@/lib/habitConfig'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +36,9 @@ interface HistoryDay {
   date: string
   dayName: string
   dayNum: string
+  /** 0 = Monday … 6 = Sunday, used as the row index of the contribution grid */
+  dow: number
+  monthLabel: string
   isToday: boolean
   done: boolean
   isSkipped: boolean
@@ -48,25 +58,17 @@ export interface ProcessedHabit {
   todayDone: boolean
   todayColor?: string | null
   streak: number
-  showStreak?: boolean
-  history7: HistoryDay[]
+  /** Streak that survives a single missed day */
+  streakLenient: number
+  /** Streak that any missed day resets */
+  streakStrict: number
+  /** true = habit-tags.json says a missed day resets the streak */
+  strictStreak: boolean
+  showStreak: boolean
+  view: HabitView
+  history: HistoryDay[]
   availableTags: TagOption[]
   visualization?: string | null
-}
-
-interface HabitSpec {
-  visualization?: string
-  showStreak?: boolean
-  strictNoSkip?: boolean
-  strictStreakReset?: boolean
-  tags?: Record<string, string>
-}
-
-type HabitConfigEntry = HabitSpec | Record<string, string>
-
-interface TagConfig {
-  tags?: Record<string, string>
-  habits?: Record<string, HabitConfigEntry>
 }
 
 const BEAVER_COLORS: Record<string, string> = {
@@ -81,19 +83,6 @@ const BEAVER_COLORS: Record<string, string> = {
   cyan: '#06b6d4',
   teal: '#14b8a6',
   indigo: '#6366f1',
-}
-
-function loadTagConfig(): TagConfig | null {
-  try {
-    const filePath = path.join(process.cwd(), 'habit-tags.json')
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf-8')
-      return JSON.parse(content) as TagConfig
-    }
-  } catch {
-    // Ignore if file doesn't exist or is invalid JSON
-  }
-  return null
 }
 
 function extractHabitTags(habitCfg: HabitConfigEntry | undefined): Record<string, string> | null {
@@ -193,19 +182,46 @@ function resolveRecordColor(
   return null
 }
 
-function getDaysList(count: number, timezone: string): { date: string; dayName: string; dayNum: string; isToday: boolean }[] {
-  const days = []
+type GridDay = Omit<HistoryDay, 'done' | 'isSkipped' | 'color' | 'tagText'>
+
+/** Weeks run Monday → Sunday */
+const DOW_INDEX: Record<string, number> = {
+  Mon: 0,
+  Tue: 1,
+  Wed: 2,
+  Thu: 3,
+  Fri: 4,
+  Sat: 5,
+  Sun: 6,
+}
+
+/**
+ * Builds a GitHub-contribution-style day range: whole Monday-to-Sunday weeks,
+ * with the final (partial) week ending on today.
+ */
+function getContributionDays(weeks: number, timezone: string): GridDay[] {
   const now = new Date()
   const yearFmt = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
   const nameFmt = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' })
   const numFmt = new Intl.DateTimeFormat('en-US', { timeZone: timezone, day: 'numeric' })
+  const monthFmt = new Intl.DateTimeFormat('en-US', { timeZone: timezone, month: 'short' })
 
+  const todayDow = DOW_INDEX[nameFmt.format(now)] ?? 0
+  // Full weeks before the current one, plus the elapsed part of the current week.
+  const count = Math.max(1, weeks - 1) * 7 + todayDow + 1
+
+  const days: GridDay[] = []
   for (let i = count - 1; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 86400 * 1000)
-    const dateStr = yearFmt.format(d)
     const dayName = nameFmt.format(d)
-    const dayNum = numFmt.format(d)
-    days.push({ date: dateStr, dayName, dayNum, isToday: i === 0 })
+    days.push({
+      date: yearFmt.format(d),
+      dayName,
+      dayNum: numFmt.format(d),
+      dow: DOW_INDEX[dayName] ?? 0,
+      monthLabel: monthFmt.format(d),
+      isToday: i === 0,
+    })
   }
   return days
 }
@@ -333,7 +349,7 @@ export async function GET() {
       })
     )
 
-    const daysHistory = getDaysList(14, timezone)
+    const daysHistory = getContributionDays(config.beaver.contributionWeeks, timezone)
     const todayStr = daysHistory[daysHistory.length - 1].date
 
     const habits: ProcessedHabit[] = []
@@ -364,15 +380,17 @@ export async function GET() {
       const todayText = recordTextMap.get(todayStr)
       const todayColor = todayDone ? resolveRecordColor(todayText, habitName, tagConfig) : null
 
-      const habitConfig = tagConfig?.habits?.[habitName] as HabitSpec | undefined
+      const habitConfig: HabitSpec | null = getHabitSpec(tagConfig, habitName)
       const normName = habitName.toLowerCase().replace(/['’]/g, '').trim()
       const isDidntSeeHabit = (habitConfig?.strictNoSkip ?? false) || normName.includes('didnt see') || normName.includes('didn see')
 
-      const streak = isDidntSeeHabit ? calcStrictStreak(completedSet, timezone) : calcStreak(completedSet, timezone)
+      const streakLenient = calcStreak(completedSet, timezone)
+      const streakStrict = calcStrictStreak(completedSet, timezone)
+      const streak = isDidntSeeHabit ? streakStrict : streakLenient
       const availableTags = getAvailableTags(habitName, tagConfig)
       const visualization = getHabitVisualization(habitName, tagConfig)
 
-      const history7: HistoryDay[] = daysHistory.map((day, idx) => {
+      const history: HistoryDay[] = daysHistory.map((day, idx) => {
         const done = completedSet.has(day.date)
         let isSkipped = false
 
@@ -401,10 +419,8 @@ export async function GET() {
         }
       })
 
-      let showStreak = true
-      if (habitConfig && typeof habitConfig === 'object' && 'showStreak' in habitConfig) {
-        showStreak = habitConfig.showStreak !== false
-      }
+      const showStreak = habitConfig?.showStreak !== false
+      const view: HabitView = habitConfig?.view ?? 'graph'
 
       habits.push({
         id: stub.id,
@@ -413,15 +429,22 @@ export async function GET() {
         todayDone,
         todayColor,
         streak,
+        streakLenient,
+        streakStrict,
+        strictStreak: isDidntSeeHabit,
         showStreak,
-        history7,
+        view,
+        history,
         availableTags,
         visualization,
       })
     }
 
+    const ui: HabitUiConfig = tagConfig?.ui ?? {}
+
     return NextResponse.json({
       habits,
+      ui,
       fetchedAt: new Date().toISOString(),
     })
   } catch (err) {

@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { wmoToInfo, dayLabel } from './weatherUtils'
+import Emoji from './Emoji'
 
 interface WeatherData {
   current: {
@@ -101,7 +102,9 @@ export default function Weather() {
             <div key={d} className={`w-day-card ${isToday ? 'w-day-card--today' : ''}`}>
               {/* Left: Big Icon + Day Name + Temp + Label + Meta Specs */}
               <div className="w-day-hero">
-                <div className="w-day-icon">{info.icon}</div>
+                <div className="w-day-icon">
+                  <Emoji char={info.icon} />
+                </div>
                 <div className="w-day-info">
                   <div className="w-day-header">
                     <span className="w-day-name">{dayLabel(d, i)}</span>
@@ -114,15 +117,12 @@ export default function Weather() {
                   <div className="w-day-label">{info.label}</div>
                   <div className="w-day-meta">
                     <span>Feels {apparent}°</span>
-                    <span className="w-dot">·</span>
                     <span>{humidity}% hum</span>
-                    <span className="w-dot">·</span>
                     <span>{wind} km/h wind</span>
                     {rain > 10 && (
-                      <>
-                        <span className="w-dot">·</span>
-                        <span className="w-rain-badge">💧 {rain}%</span>
-                      </>
+                      <span className="w-rain-badge">
+                        <Emoji char="💧" /> {rain}%
+                      </span>
                     )}
                   </div>
                 </div>
@@ -133,7 +133,9 @@ export default function Weather() {
                 {dayHourlySlots.map((slot) => (
                   <div key={slot.hour} className="w-hour-slot">
                     <span className="w-hour-label">{slot.hour}</span>
-                    <span className="w-hour-icon">{wmoToInfo(slot.code).icon}</span>
+                    <span className="w-hour-icon">
+                      <Emoji char={wmoToInfo(slot.code).icon} />
+                    </span>
                     <span className="w-hour-temp">{slot.temp}°</span>
                   </div>
                 ))}
@@ -154,7 +156,7 @@ export default function Weather() {
         }
         .w-err, .w-loading {
           font-family: var(--font-mono);
-          font-size: 18px;
+          font-size: 20px;
           color: var(--text-muted);
         }
 
@@ -205,13 +207,21 @@ export default function Weather() {
         }
 
         .w-day-card--today .w-day-icon {
-          font-size: 80px;
+          font-size: 88px;
           line-height: 1;
           filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
         }
 
+        /* Apple's set where it exists (macOS/iOS ship it); Noto elsewhere so a
+           Linux/Windows dashboard still gets one consistent pack. */
+        .w-day-icon,
+        .w-hour-icon {
+          /* Only reached if a bundled emoji image is missing */
+          font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+        }
+
         .w-day-icon {
-          font-size: 52px;
+          font-size: 57px;
           line-height: 1;
           filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
         }
@@ -230,16 +240,15 @@ export default function Weather() {
 
         .w-day-name {
           font-family: var(--font-mono);
-          font-size: 20px;
-          font-weight: 800;
+          font-size: 22px;
+          font-weight: 500;
           color: var(--text-primary);
-          text-transform: uppercase;
           letter-spacing: 0.04em;
         }
 
         .w-day-card--today .w-day-name {
-          font-size: 30px;
-          font-weight: 900;
+          font-size: 33px;
+          font-weight: 500;
           color: #ffffff;
           letter-spacing: 0.05em;
         }
@@ -252,62 +261,61 @@ export default function Weather() {
         }
 
         .w-day-max {
-          font-size: 22px;
-          font-weight: 800;
+          font-size: 24px;
+          font-weight: 500;
           color: var(--text-primary);
         }
 
         .w-day-card--today .w-day-max {
-          font-size: 32px;
-          font-weight: 800;
+          font-size: 35px;
+          font-weight: 500;
           color: #ffffff;
         }
 
         .w-day-slash {
-          font-size: 15px;
+          font-size: 16px;
           color: var(--text-muted);
         }
 
         .w-day-min {
-          font-size: 16px;
-          font-weight: 600;
+          font-size: 18px;
+          font-weight: 400;
           color: var(--text-muted);
         }
 
         .w-day-card--today .w-day-min {
-          font-size: 20px;
-          font-weight: 600;
+          font-size: 22px;
+          font-weight: 400;
         }
 
         .w-day-label {
-          font-size: 18px;
+          font-size: 20px;
           font-weight: 500;
           color: var(--text-secondary);
         }
 
         .w-day-card--today .w-day-label {
-          font-size: 22px;
-          font-weight: 600;
+          font-size: 24px;
+          font-weight: 400;
           color: var(--text-primary);
         }
 
+        /* Stacked so the metrics stay inside the hero column and never run
+           under the hourly chips */
         .w-day-meta {
           display: flex;
-          align-items: center;
-          gap: 6px;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 2px;
           font-family: var(--font-mono);
-          font-size: 14px;
+          font-size: 15px;
+          line-height: 1.35;
           color: var(--text-muted);
-          flex-wrap: wrap;
         }
 
         .w-day-card--today .w-day-meta {
-          font-size: 16px;
+          font-size: 18px;
           color: var(--text-secondary);
-        }
-
-        .w-dot {
-          opacity: 0.4;
         }
 
         .w-rain-badge {
@@ -315,9 +323,9 @@ export default function Weather() {
           align-items: center;
           gap: 4px;
           color: #38bdf8;
-          font-family: var(--font-mono);
-          font-size: 18px;
-          font-weight: 800;
+          font-family: 'Apple Color Emoji', 'Segoe UI Emoji', var(--font-mono);
+          font-size: 20px;
+          font-weight: 500;
           background: transparent;
           border: none;
           padding: 0;
@@ -325,7 +333,7 @@ export default function Weather() {
         }
 
         .w-day-card--today .w-rain-badge {
-          font-size: 20px;
+          font-size: 22px;
         }
 
         .w-day-hourly-row {
@@ -336,6 +344,9 @@ export default function Weather() {
           flex: 1;
           min-width: 0;
           justify-content: flex-end;
+          /* Never wrap under the hero text — chips shrink instead */
+          flex-wrap: nowrap;
+          overflow: hidden;
         }
 
         .w-hour-slot {
@@ -346,45 +357,46 @@ export default function Weather() {
           background: transparent;
           border: none;
           padding: 6px 10px;
-          min-width: 64px;
+          min-width: 0;
+          flex: 0 1 64px;
         }
 
         .w-day-card--today .w-hour-slot {
           padding: 10px 16px;
-          min-width: 74px;
+          flex: 0 1 74px;
         }
 
         .w-hour-label {
           font-family: var(--font-mono);
-          font-size: 16px;
-          font-weight: 800;
+          font-size: 18px;
+          font-weight: 500;
           color: #9ca3af;
         }
 
         .w-day-card--today .w-hour-label {
-          font-size: 18px;
-          font-weight: 800;
+          font-size: 20px;
+          font-weight: 500;
           color: #cbd5e1;
         }
 
         .w-hour-icon {
-          font-size: 28px;
+          font-size: 31px;
         }
 
         .w-day-card--today .w-hour-icon {
-          font-size: 32px;
+          font-size: 35px;
         }
 
         .w-hour-temp {
           font-family: var(--font-mono);
-          font-size: 16px;
-          font-weight: 800;
+          font-size: 18px;
+          font-weight: 500;
           color: #ffffff;
         }
 
         .w-day-card--today .w-hour-temp {
-          font-size: 18px;
-          font-weight: 800;
+          font-size: 20px;
+          font-weight: 500;
           color: #ffffff;
         }
       `}</style>

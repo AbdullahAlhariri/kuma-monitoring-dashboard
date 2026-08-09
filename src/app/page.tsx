@@ -23,7 +23,6 @@ export default function Dashboard() {
           <div className="horizontal-divider" />
 
           <section className="card card-weather">
-            <div className="section-label">{process.env.NEXT_PUBLIC_WEATHER_LABEL ?? 'Weather'}</div>
             <Weather />
           </section>
         </div>
@@ -101,11 +100,15 @@ export default function Dashboard() {
           min-width: 0;
         }
 
-        .card-weather::-webkit-scrollbar {
-          width: 2px;
+        /* Scrolls, but the bar itself stays out of sight */
+        .card-weather {
+          scrollbar-width: none;
+          -ms-overflow-style: none;
         }
-        .card-weather::-webkit-scrollbar-thumb {
-          background: var(--border-bright);
+        .card-weather::-webkit-scrollbar {
+          width: 0;
+          height: 0;
+          display: none;
         }
 
         .vertical-divider {
@@ -140,16 +143,6 @@ export default function Dashboard() {
           flex-direction: column;
           gap: 14px;
           min-height: 0;
-        }
-
-        /* Section labels */
-        .section-label {
-          font-size: 18px;
-          font-weight: 600;
-          letter-spacing: 0.14em;
-          text-transform: uppercase;
-          color: var(--text-primary);
-          flex-shrink: 0;
         }
       `}</style>
     </div>

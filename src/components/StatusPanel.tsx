@@ -276,7 +276,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           .s-collapsed-title strong {
             font-family: var(--font-mono);
             color: #22c55e;
-            font-size: 20px;
+            font-size: 22px;
             letter-spacing: 0.02em;
           }
 
@@ -307,17 +307,16 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           }
 
           .s-group-chip-name {
-            font-size: 14px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 400;
             color: var(--text-primary);
-            text-transform: uppercase;
             letter-spacing: 0.05em;
           }
 
           .s-group-chip-count {
             font-family: var(--font-mono);
-            font-size: 16px;
-            font-weight: 700;
+            font-size: 18px;
+            font-weight: 500;
           }
 
           .s-collapsed-right {
@@ -329,7 +328,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
 
           .s-last-updated {
             font-family: var(--font-mono);
-            font-size: 15px;
+            font-size: 16px;
             color: var(--text-secondary);
           }
 
@@ -340,8 +339,8 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
             padding: 6px 16px;
             border-radius: var(--radius-sm);
             font-family: var(--font-mono);
-            font-size: 14px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 400;
             cursor: pointer;
             transition: all 0.2s ease;
           }
@@ -437,11 +436,10 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           z-index: 1000;
           pointer-events: none;
           font-family: var(--font-mono);
-          font-size: clamp(72px, 12vw, 160px);
-          font-weight: 700;
+          font-size: clamp(79px, 13.2vw, 176px);
+          font-weight: 500;
           color: #ef4444;
           letter-spacing: 0.08em;
-          text-transform: uppercase;
           animation: degrade-flash 0.8s ease-in-out infinite;
         }
         @keyframes degrade-flash {
@@ -451,7 +449,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
 
         .s-err, .s-loading {
           font-family: var(--font-mono);
-          font-size: 17px;
+          font-size: 19px;
           color: var(--text-muted);
           display: flex;
           gap: 6px;
@@ -481,14 +479,14 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           50%       { opacity: 0.45; }
         }
         .s-overall-label {
-          font-size: 19px;
+          font-size: 21px;
           font-weight: 400;
           color: var(--text-secondary);
           letter-spacing: 0.04em;
         }
         .s-last-updated {
           font-family: var(--font-mono);
-          font-size: 17px;
+          font-size: 19px;
           color: var(--text-secondary);
         }
         .s-collapse-btn {
@@ -498,7 +496,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           padding: 4px 12px;
           border-radius: var(--radius-sm);
           font-family: var(--font-mono);
-          font-size: 13px;
+          font-size: 14px;
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s ease;
@@ -534,10 +532,9 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           align-items: baseline;
           justify-content: space-between;
           gap: 8px;
-          font-size: 17px;
-          font-weight: 600;
+          font-size: 19px;
+          font-weight: 400;
           letter-spacing: 0.12em;
-          text-transform: uppercase;
           color: var(--text-primary);
           margin-bottom: 4px;
           padding-bottom: 6px;
@@ -545,8 +542,8 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
         }
         .s-group-count {
           font-family: var(--font-mono);
-          font-size: 19px;
-          font-weight: 700;
+          font-size: 21px;
+          font-weight: 500;
           letter-spacing: 0;
           flex-shrink: 0;
         }
@@ -582,7 +579,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
         }
         .s-monitor-name {
           flex: 1;
-          font-size: 17px;
+          font-size: 19px;
           font-weight: 400;
           color: var(--text-primary);
           white-space: nowrap;
@@ -591,10 +588,9 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           min-width: 0;
         }
         .s-status-label {
-          font-size: 15px;
-          font-weight: 600;
+          font-size: 16px;
+          font-weight: 400;
           letter-spacing: 0.06em;
-          text-transform: uppercase;
           flex-shrink: 0;
         }
         .s-monitor-bottom {
@@ -605,12 +601,12 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
         }
         .s-ping {
           font-family: var(--font-mono);
-          font-size: 15px;
+          font-size: 16px;
           color: var(--text-secondary);
         }
         .s-checked {
           font-family: var(--font-mono);
-          font-size: 15px;
+          font-size: 16px;
           color: var(--text-secondary);
         }
       `}</style>
