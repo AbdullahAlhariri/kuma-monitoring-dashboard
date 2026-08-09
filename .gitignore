@@ -8,10 +8,19 @@ node_modules/
 out/
 
 # Environment — never commit real values
-.env.local
-.env.*.local
-habit-tags.json
+.env
+.env*.local
+.env.production
+.env.development
+.env.test
+!.env.example
 
+# Runtime config written by the dashboard
+dashboard.config.json
+dashboard-settings.json
+mawaqit-config.json
+habit-tags.json
+*.local.json
 
 # Build artefacts
 dist/
@@ -23,14 +32,24 @@ next-env.d.ts
 Thumbs.db
 
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Editors
+# Keys & Certificates
+*.pem
+*.key
+*.crt
+*.p12
+
+# Editors & AI Tools
 .vscode/
 .idea/
+.claude/
+.gemini/
+.cursor/
 *.swp
 *.swo
-/mawaqit-config.json
+*mcp.json

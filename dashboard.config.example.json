@@ -1,0 +1,34 @@
+{
+  "dashboard": {
+    "schoolWeekOffset": 0
+  },
+  "mawaqit": {
+    "mosque": {
+      "name": "Your Mosque",
+      "url": "https://mawaqit.net/en/your-mosque",
+      "slug": "your-mosque"
+    }
+  },
+  "habits": {
+    "tags": {
+      "late": "#ef4444",
+      "15 minutes": "#3b82f6",
+      "30 minutes": "#4ade80",
+      "45 minutes": "#22c55e",
+      "1 hour": "#16a34a",
+      "more": "#15803d"
+    },
+    "habits": {
+      "Read": {
+        "visualization": "chart",
+        "tags": {
+          "15 minutes": "#3b82f6",
+          "30 minutes": "#4ade80",
+          "45 minutes": "#22c55e",
+          "1 hour": "#16a34a",
+          "more": "#15803d"
+        }
+      }
+    }
+  }
+}

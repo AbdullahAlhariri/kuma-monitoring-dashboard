@@ -1,7 +1,7 @@
 {
   "name": "mirror-dashboard",
   "version": "1.0.0",
-  "description": "Fullscreen monitoring dashboard — clock, weather, and Uptime Kuma status",
+  "description": "Fullscreen monitoring dashboard \u2014 clock, weather, and Uptime Kuma status",
   "license": "MIT",
   "private": false,
   "scripts": {
@@ -9,9 +9,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "sync:emoji": "node scripts/sync-emoji.mjs",
+    "postinstall": "node scripts/sync-emoji.mjs"
   },
   "dependencies": {
+    "emoji-datasource-apple": "^16.0.0",
     "next": "15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

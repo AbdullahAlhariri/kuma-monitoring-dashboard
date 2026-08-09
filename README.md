@@ -29,7 +29,9 @@ Open [http://localhost:3000](http://localhost:3000) in a fullscreen browser.
 
 ## Configuration
 
-All configuration lives in `.env.local`. Copy `.env.example` as a starting point — no value is required to get a working dashboard.
+Secrets and connection settings live in `.env.local`. Copy `.env.example` as a starting point — no value is required to get a working dashboard.
+
+Everything the dashboard itself writes (mosque, habit colours and layout, school-week offset) lives in a single `dashboard.config.json` at the repo root. Copy `dashboard.config.example.json` to `dashboard.config.json` to seed it, or let the UI create it. Set `DASHBOARD_CONFIG_PATH` to move it. The file is gitignored; the older `habit-tags.json`, `mawaqit-config.json` and `dashboard-settings.json` are merged into it automatically on first read.
 
 | Variable | Default | Description |
 |---|---|---|
