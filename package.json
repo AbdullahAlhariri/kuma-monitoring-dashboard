@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
     "sync:emoji": "node scripts/sync-emoji.mjs",
     "postinstall": "node scripts/sync-emoji.mjs"
   },

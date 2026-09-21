@@ -18,7 +18,7 @@ interface KumaData {
   fetchedAt: string
 }
 
-type KumaApiResponse = KumaData | { error: string }
+type KumaApiResponse = KumaData | { error: string } | { enabled: false }
 
 const STATUS_MAP: Record<number, { label: string; color: string; dot: string }> = {
   1:  { label: 'Up',          color: 'var(--up)',         dot: '#22c55e' },
@@ -45,6 +45,7 @@ interface StatusPanelProps {
 export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
   const [data, setData] = useState<KumaData | null>(null)
   const [error, setError] = useState(false)
+  const [disabled, setDisabled] = useState(false)
   const [now, setNow] = useState(Date.now())
   const [userExpanded, setUserExpanded] = useState(false)
 
@@ -64,6 +65,18 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
   const prevAllUpRef = useRef<boolean | null>(null)
 
   useEffect(() => {
+    // Losing contact with Kuma is not evidence that a monitored service is down.
+    if (error || disabled) {
+      if (sirenRef.current) {
+        sirenRef.current.gain.gain.value = 0
+        try { sirenRef.current.osc.stop(); sirenRef.current.lfo.stop() } catch {}
+        sirenRef.current = null
+      }
+      prevDegradedRef.current = false
+      prevAllUpRef.current = null
+      setUserExpanded(false)
+      return
+    }
     if (!data) return
     const allUp = data.monitors.every(m => m.status === 1)
     const isDegraded = !allUp
@@ -118,7 +131,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
     }
 
     prevDegradedRef.current = isDegraded
-  }, [data])
+  }, [data, error, disabled])
 
   // Cleanup siren on unmount
   useEffect(() => {
@@ -132,36 +145,84 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
   }, [])
 
   useEffect(() => {
-    const fetchData = (): void => {
-      fetch('/api/kuma')
-        .then(r => r.json() as Promise<KumaApiResponse>)
-        .then(d => {
-          if ('error' in d) setError(true)
-          else { setData(d); setError(false) }
-        })
-        .catch(() => { setError(true) })
+    let disposed = false
+    let controller: AbortController | null = null
+    const fetchData = async (): Promise<void> => {
+      if (controller) return
+      controller = new AbortController()
+      const timeout = setTimeout(() => { controller?.abort() }, 12_000)
+      try {
+        const response = await fetch('/api/kuma', { cache: 'no-store', signal: controller.signal })
+        if (!response.ok) throw new Error('Kuma unavailable')
+        const result = await response.json() as KumaApiResponse
+        if (disposed) return
+        if ('enabled' in result) {
+          setDisabled(true)
+          setData(null)
+        } else if ('monitors' in result && Array.isArray(result.monitors)) {
+          setData(result)
+          setDisabled(false)
+        } else {
+          throw new Error('Invalid Kuma response')
+        }
+        setError(false)
+      } catch {
+        if (!disposed) setError(true)
+      } finally {
+        clearTimeout(timeout)
+        controller = null
+      }
     }
 
-    fetchData()
-    const poll = setInterval(fetchData, 15_000)
+    void fetchData()
+    const poll = setInterval(() => { void fetchData() }, 15_000)
     const ticker = setInterval(() => { setNow(Date.now()) }, 1000)
-    return () => { clearInterval(poll); clearInterval(ticker) }
+    return () => {
+      disposed = true
+      controller?.abort()
+      clearInterval(poll)
+      clearInterval(ticker)
+    }
   }, [])
 
   const allUp = data ? data.monitors.every(m => m.status === 1) : true
   const anyDown = data ? data.monitors.some(m => m.status === 0) : false
-  const isCollapsed = allUp && !userExpanded
+  const isCollapsed = error || disabled || !data || (allUp && !userExpanded)
 
   useEffect(() => {
     onFoldChange?.(isCollapsed)
   }, [isCollapsed, onFoldChange])
 
-  if (error) return (
-    <div className="s-err">
-      <span>●</span> Status unreachable
+  if (error || disabled || !data) return (
+    <div className="s-notice" role="status">
+      <span className="s-notice-dot" aria-hidden="true" />
+      <span>{error ? 'Kuma is down' : disabled ? 'Kuma is disabled' : 'Connecting to Kuma…'}</span>
+      {error && <span className="s-notice-detail">Retrying automatically</span>}
+      <style jsx>{`
+        .s-notice {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+          min-height: 64px;
+          padding: 12px 16px;
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          background: var(--surface);
+          color: var(--text-muted);
+          font-size: 13px;
+        }
+        .s-notice-dot {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: currentColor;
+          flex-shrink: 0;
+        }
+        .s-notice-detail { font-size: 11px; opacity: 0.7; }
+      `}</style>
     </div>
   )
-  if (!data) return <div className="s-loading">Connecting to status…</div>
 
   const groups: Record<string, Monitor[]> = {}
   for (const m of data.monitors) {
@@ -182,6 +243,7 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
             setUserExpanded(true)
           }
         }}
@@ -192,25 +254,6 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           <span className="s-collapsed-title">
             <strong>({upCount}/{totalCount} UP)</strong>
           </span>
-        </div>
-
-        <div className="s-collapsed-groups">
-          {Object.entries(groups).map(([group, monitors]) => {
-            const groupUp = monitors.filter(m => m.status === 1).length
-            const groupTotal = monitors.length
-            const isGroupAllUp = groupUp === groupTotal
-            return (
-              <div key={group} className="s-collapsed-group-chip">
-                <span className="s-group-chip-name">{group}</span>
-                <span
-                  className="s-group-chip-count"
-                  style={{ color: isGroupAllUp ? '#22c55e' : '#ef4444' }}
-                >
-                  {groupUp}/{groupTotal}
-                </span>
-              </div>
-            )
-          })}
         </div>
 
         <div className="s-collapsed-right">
@@ -233,9 +276,10 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           .s-collapsed-bar {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 24px;
-            padding: 16px 24px;
+            justify-content: space-between;
+            gap: 16px;
+            min-height: 64px;
+            padding: 12px 16px;
             border-radius: var(--radius-sm);
             background: var(--surface);
             border: 1px solid rgba(34, 197, 94, 0.4);
@@ -280,45 +324,6 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
             letter-spacing: 0.02em;
           }
 
-          .s-collapsed-groups {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            flex: 1;
-            min-width: 0;
-            overflow-x: auto;
-            padding: 2px 0;
-          }
-
-          .s-collapsed-groups::-webkit-scrollbar {
-            display: none;
-          }
-
-          .s-collapsed-group-chip {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 14px;
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid var(--border-bright);
-            flex-shrink: 0;
-          }
-
-          .s-group-chip-name {
-            font-size: 15px;
-            font-weight: 400;
-            color: var(--text-primary);
-            letter-spacing: 0.05em;
-          }
-
-          .s-group-chip-count {
-            font-family: var(--font-mono);
-            font-size: 18px;
-            font-weight: 500;
-          }
-
           .s-collapsed-right {
             display: flex;
             align-items: center;
@@ -348,6 +353,31 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           .s-expand-btn:hover {
             background: rgba(255, 255, 255, 0.16);
             border-color: #fff;
+          }
+
+          @media (max-width: 1400px) {
+            .s-last-updated { display: none; }
+            .s-collapsed-title strong { font-size: 18px; }
+            .s-expand-btn { padding: 6px 10px; font-size: 12px; }
+          }
+          @container (max-width: 520px) {
+            .s-last-updated { display: none; }
+            .s-collapsed-title strong { font-size: 18px; }
+            .s-expand-btn { padding: 6px 10px; font-size: 12px; }
+          }
+          @container (max-width: 320px) {
+            .s-collapsed-bar { gap: 8px; padding: 12px 10px; }
+            .s-collapsed-left { gap: 8px; }
+            .s-collapsed-title strong { font-size: 16px; }
+            .s-expand-btn { padding: 6px 8px; font-size: 11px; }
+          }
+          @container (max-width: 240px) {
+            .s-collapsed-right { display: none; }
+          }
+          @media (max-width: 480px) {
+            .s-collapsed-bar { gap: 10px; padding: 10px; }
+            .s-collapsed-left { gap: 8px; }
+            .s-collapsed-title strong { font-size: 15px; }
           }
         `}</style>
       </div>
@@ -446,16 +476,6 @@ export default function StatusPanel({ onFoldChange }: StatusPanelProps = {}) {
           0%, 100% { opacity: 1; text-shadow: 0 0 40px #ef4444, 0 0 80px #ef444466; }
           50%       { opacity: 0.1; text-shadow: none; }
         }
-
-        .s-err, .s-loading {
-          font-family: var(--font-mono);
-          font-size: 19px;
-          color: var(--text-muted);
-          display: flex;
-          gap: 6px;
-          align-items: center;
-        }
-        .s-err span { color: var(--down); }
 
         .s-header {
           display: flex;

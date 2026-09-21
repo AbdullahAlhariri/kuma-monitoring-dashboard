@@ -21,8 +21,8 @@ interface KumaHeartbeat {
 }
 
 interface KumaHeartbeatResponse {
-  heartbeatList: Record<number, KumaHeartbeat[] | undefined>
-  uptimeList: Record<string, number | undefined>
+  heartbeatList?: Record<number, KumaHeartbeat[] | undefined>
+  uptimeList?: Record<string, number | undefined>
 }
 
 interface KumaPageResponse {
@@ -38,9 +38,10 @@ export async function GET() {
   const { baseUrl, slug } = config.kuma
 
   try {
+    const signal = AbortSignal.timeout(8_000)
     const [pageRes, heartbeatRes] = await Promise.all([
-      fetch(`${baseUrl}/api/status-page/${slug}`, { cache: 'no-store' }),
-      fetch(`${baseUrl}/api/status-page/heartbeat/${slug}`, { cache: 'no-store' }),
+      fetch(`${baseUrl}/api/status-page/${slug}`, { cache: 'no-store', signal }),
+      fetch(`${baseUrl}/api/status-page/heartbeat/${slug}`, { cache: 'no-store', signal }),
     ])
 
     if (!pageRes.ok || !heartbeatRes.ok) {
@@ -49,14 +50,19 @@ export async function GET() {
 
     const page = (await pageRes.json()) as KumaPageResponse
     const heartbeat = (await heartbeatRes.json()) as KumaHeartbeatResponse
+    const { heartbeatList, uptimeList } = heartbeat
+
+    if (!Array.isArray(page.publicGroupList) || !heartbeatList || !uptimeList) {
+      throw new Error('Invalid Kuma status response')
+    }
 
     const monitors = (page.publicGroupList ?? []).flatMap((group) =>
       (group.monitorList ?? []).map((m) => {
-        const hbArr = heartbeat.heartbeatList[m.id] ?? []
+        const hbArr = heartbeatList[m.id] ?? []
         const hb = hbArr.length > 0
           ? hbArr.reduce((a, b) => (a.time >= b.time ? a : b))
           : null
-        const uptime24 = heartbeat.uptimeList[`${m.id}_24`]
+        const uptime24 = uptimeList[`${m.id}_24`]
         return {
           id: m.id,
           name: m.name,

@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 const Clock = dynamic(() => import('@/components/Clock'), { ssr: false })
 const Weather = dynamic(() => import('@/components/Weather'), { ssr: false })
 const StatusPanel = dynamic(() => import('@/components/StatusPanel'), { ssr: false })
+const MarketTicker = dynamic(() => import('@/components/MarketTicker'), { ssr: false })
 const Habits = dynamic(() => import('@/components/Habits'), { ssr: false })
 
 export default function Dashboard() {
@@ -38,10 +39,12 @@ export default function Dashboard() {
       {/* ── DIVIDER ─────────────────────────────────────── */}
       <div className="mid-divider" />
 
-      {/* ── KUMA STATUS ─────────────────────────────────── */}
-      <section className="card card-status">
-        <StatusPanel onFoldChange={setIsKumaFolded} />
-      </section>
+      <footer className={`bottom-row${isKumaFolded ? '' : ' status-expanded'}`}>
+        <section className="card card-status" aria-label="Kuma status">
+          <StatusPanel onFoldChange={setIsKumaFolded} />
+        </section>
+        {isKumaFolded && <MarketTicker />}
+      </footer>
 
       <style jsx>{`
         .dashboard {
@@ -137,12 +140,29 @@ export default function Dashboard() {
         }
 
         /* Kuma section shrinks or expands based on status */
+        .bottom-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+          align-items: center;
+          gap: 16px;
+          flex-shrink: 0;
+          min-height: 64px;
+        }
+
+        .bottom-row.status-expanded { grid-template-columns: minmax(0, 1fr); }
+
         .card-status {
+          container-type: inline-size;
           flex-shrink: 0;
           display: flex;
           flex-direction: column;
           gap: 14px;
           min-height: 0;
+          min-width: 0;
+        }
+
+        @media (max-width: 760px) {
+          .bottom-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
         }
       `}</style>
     </div>
