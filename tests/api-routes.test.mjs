@@ -9,6 +9,10 @@ const market = {}
 runInNewContext(ts.transpileModule(
   readFileSync(new URL('../src/lib/market.ts', import.meta.url), 'utf8'), { compilerOptions },
 ).outputText, { exports: market })
+const sentiment = {}
+runInNewContext(ts.transpileModule(
+  readFileSync(new URL('../src/lib/sentiment.ts', import.meta.url), 'utf8'), { compilerOptions },
+).outputText, { exports: sentiment })
 
 // Execute the actual route handlers with deterministic upstream feeds and time.
 function loadRoute(route, fetch, { enabled = true, timedOut = false } = {}) {
@@ -32,6 +36,7 @@ function loadRoute(route, fetch, { enabled = true, timedOut = false } = {}) {
     require(name) {
       if (name === 'next/server') return { NextResponse: { json: Response.json } }
       if (name === '@/lib/market') return market
+      if (name === '@/lib/sentiment') return sentiment
       if (name === '@/lib/config') return { config: { kuma: { enabled, baseUrl: 'https://kuma.test', slug: 'public' } } }
       throw new Error(`Unexpected import: ${name}`)
     },
@@ -238,4 +243,103 @@ test('disabled Kuma does not call the upstream', async () => {
   const route = loadRoute('kuma', () => assert.fail('Should not fetch disabled Kuma'), { enabled: false })
   const response = await route.get()
   assert.equal((await response.json()).enabled, false)
+})
+
+const sentimentFeed = url => Response.json(url.includes('alternative.me')
+  ? { data: [{ value: '70', value_classification: 'Greed', timestamp: '1789948800' }] }
+  : { chart: { result: [{ meta: { symbol: '^VIX', regularMarketPrice: 15.03, regularMarketTime: 1789992000 } }] } })
+
+test('sentiment returns crypto Fear & Greed and market VIX independently, with caching', async () => {
+  const calls = []
+  const route = loadRoute('sentiment', async (url, options) => {
+    calls.push(url)
+    assert.ok(options.signal instanceof AbortSignal)
+    return sentimentFeed(url)
+  })
+  const [first, concurrent] = await Promise.all([route.get(), route.get()])
+  const data = await first.json()
+  assert.deepEqual(data.indices.map(index => [index.kind, index.value, index.classification, index.stale]), [
+    ['crypto', 70, 'Greed', false], ['market', 15.03, null, false],
+  ])
+  assert.deepEqual(await concurrent.json(), data)
+  assert.equal(first.headers.get('cache-control'), 'no-store')
+  assert.equal(calls.length, 2)
+  await route.get()
+  assert.equal(calls.length, 2)
+  route.advance(5 * 60_000 + 1000)
+  await route.get()
+  assert.equal(calls.length, 3, 'VIX refreshes after five minutes')
+  route.advance(10 * 60_000)
+  await route.get()
+  assert.equal(calls.length, 5, 'Crypto refreshes after fifteen minutes')
+})
+
+test('an unavailable crypto fear feed does not hide VIX', async () => {
+  const route = loadRoute('sentiment', async url => url.includes('alternative.me')
+    ? new Response('Unavailable', { status: 503 }) : sentimentFeed(url))
+  const { indices } = await (await route.get()).json()
+  assert.equal(indices[0].value, null)
+  assert.equal(indices[0].stale, true)
+  assert.equal(indices[1].value, 15.03)
+  assert.equal(indices[1].stale, false)
+})
+
+test('sentiment preserves previous readings on failure and recovers without inventing values', async () => {
+  let offline = false
+  const route = loadRoute('sentiment', async url => {
+    if (offline) throw new Error('Offline')
+    return sentimentFeed(url)
+  })
+  const first = await (await route.get()).json()
+  offline = true
+  route.advance(16 * 60_000)
+  const failed = await (await route.get()).json()
+  failed.indices.forEach((index, position) => {
+    assert.equal(index.value, first.indices[position].value)
+    assert.equal(index.fetchedAt, first.indices[position].fetchedAt)
+    assert.equal(index.asOf, first.indices[position].asOf)
+    assert.equal(index.stale, true)
+  })
+  offline = false
+  route.advance(16 * 60_000)
+  const recovered = await (await route.get()).json()
+  assert.ok(recovered.indices.every(index => !index.stale))
+})
+
+test('crypto accepts 0 as extreme fear, while VIX is not capped at 100', async () => {
+  const route = loadRoute('sentiment', async url => Response.json(url.includes('alternative.me')
+    ? { data: [{ value: '0', value_classification: 'Extreme Fear', timestamp: '1789948800' }] }
+    : { chart: { result: [{ meta: { symbol: '^VIX', regularMarketPrice: 110, regularMarketTime: 1789992000 } }] } }))
+  const { indices } = await (await route.get()).json()
+  assert.equal(indices[0].value, 0)
+  assert.equal(indices[0].classification, 'Extreme Fear')
+  assert.equal(indices[1].value, 110)
+  assert.ok(indices.every(index => !index.stale))
+})
+
+test('invalid sentiment scores, malformed payloads, and wrong index symbols are rejected', async () => {
+  for (const invalid of [null, {}, { data: [{ value: '101', timestamp: '1789948800' }] }, { data: [{ value: '', timestamp: '1789948800' }] }]) {
+    const route = loadRoute('sentiment', async url => Response.json(url.includes('alternative.me') ? invalid
+      : { chart: { result: [{ meta: { symbol: '^GSPC', regularMarketPrice: 6000, regularMarketTime: 1789992000 } }] } }))
+    const { indices } = await (await route.get()).json()
+    assert.ok(indices.every(index => index.value === null && index.stale))
+  }
+})
+
+test('sentiment timeouts return quiet unavailable states', async () => {
+  const route = loadRoute('sentiment', async (_url, options) => {
+    options.signal.throwIfAborted()
+    assert.fail('A timed-out feed should abort')
+  }, { timedOut: true })
+  const { indices } = await (await route.get()).json()
+  assert.ok(indices.every(index => index.value === null && index.stale))
+  assert.deepEqual(route.timeouts, [8000, 8000])
+})
+
+test('an old crypto sentiment observation is visibly stale even if the feed responds', async () => {
+  const route = loadRoute('sentiment', async url => sentimentFeed(url))
+  route.advance(3 * 24 * 60 * 60_000)
+  const { indices } = await (await route.get()).json()
+  assert.equal(indices[0].value, 70)
+  assert.equal(indices[0].stale, true)
 })

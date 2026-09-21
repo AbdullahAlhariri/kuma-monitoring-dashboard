@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import FearIndices from '@/components/FearIndices'
 import { CRYPTO_SYMBOLS, MARKET_INSTRUMENTS, MARKET_SYMBOLS, priceChangePercent, type MarketQuote, type MarketResponse, type MarketSymbol } from '@/lib/market'
 
 interface StreamingQuote extends Omit<MarketQuote, 'changePercent' | 'referencePrice'> {
@@ -182,10 +183,12 @@ export default function MarketTicker() {
           )
         })}
       </div>
+      <FearIndices />
       <style jsx>{`
         .market-ticker {
           display: flex;
           align-items: center;
+          gap: 16px;
           height: 64px;
           min-height: 64px;
           min-width: 0;
@@ -198,7 +201,7 @@ export default function MarketTicker() {
           align-items: center;
           justify-content: space-between;
           gap: 14px;
-          width: 100%;
+          flex: 1 1 0;
           min-width: 0;
           overflow-x: auto;
           padding: 6px 0;
