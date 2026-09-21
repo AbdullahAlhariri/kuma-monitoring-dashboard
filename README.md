@@ -8,6 +8,9 @@ A fullscreen monitoring dashboard built with Next.js 15. Shows the current time,
 - **Weather** — current conditions, hourly forecast, and 7-day outlook via [Open-Meteo](https://open-meteo.com/) (no API key required)
 - **Infrastructure status** — live monitor status via [Uptime Kuma](https://github.com/louislam/uptime-kuma), grouped by service with up/total count
 - **Degraded alert** — full-screen flashing red overlay whenever any monitor is not `Up`
+- **Quiet Kuma outages** — an unreachable Kuma server shows a small gray notice, silences any ongoing alert, and retries automatically
+- **Market prices** — a plain, single line of USD prices for BTC, ETH, RENDER, HIEU, oil, gold, and silver takes 75% of the bottom row, with 25% for Kuma, matching its collapsed height. Collapsed Kuma shows the total status count without group chips; expanding it hides the prices and uses the full row. Crypto streams from Coinbase, with polling as a fallback. Yahoo Finance supplies the USD London HIEU listing (`HIEU.L`) and WTI oil (`CL=F`, per barrel), gold (`GC=F`), and silver (`SI=F`) futures. Gold and silver are converted from troy ounces to **USD per gram**, marked `/g`, using 31.1034768 grams per troy ounce. These refresh every minute and carry a `†` delayed marker; each quote has a tooltip and accessible label with its status and units. Feed failures retain the last price with a stale label; no API keys are needed.
+- **Daily change** — prices stay white, with a green gain or red loss percentage beside them. Crypto compares against today's opening price at 00:00 UTC; HIEU and commodities compare against the previous close. Unchanged percentages and quotes without a comparison stay neutral; stale prices and changes are muted.
 
 ## Screenshots
 <p>
@@ -29,7 +32,9 @@ Open [http://localhost:3000](http://localhost:3000) in a fullscreen browser.
 
 ## Configuration
 
-All configuration lives in `.env.local`. Copy `.env.example` as a starting point — no value is required to get a working dashboard.
+Secrets and connection settings live in `.env.local`. Copy `.env.example` as a starting point — no value is required to get a working dashboard.
+
+Everything the dashboard itself writes (mosque, habit colours and layout, school-week offset) lives in a single `dashboard.config.json` at the repo root. Copy `dashboard.config.example.json` to `dashboard.config.json` to seed it, or let the UI create it. Set `DASHBOARD_CONFIG_PATH` to move it. The file is gitignored; the older `habit-tags.json`, `mawaqit-config.json` and `dashboard-settings.json` are merged into it automatically on first read.
 
 | Variable | Default | Description |
 |---|---|---|

@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
 import { config } from '@/lib/config'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
+  if (!config.weather.enabled) {
+    return NextResponse.json({ enabled: false })
+  }
+
   const { searchParams } = new URL(request.url)
 
   const rawLat = searchParams.get('lat') ?? config.weather.lat
